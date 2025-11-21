@@ -757,7 +757,9 @@ def create_database(just_source=None, quiet=False, conf=False):
                     )
   
     # Open the PyStructure and Save as FITS File
-    if 'save_band_maps' not in globals():
+    if 'save_mom_maps' not in locals():
+        save_mom_maps = False
+    if 'save_band_maps' not in locals():
         save_band_maps = False
 
     if save_mom_maps | save_band_maps:
