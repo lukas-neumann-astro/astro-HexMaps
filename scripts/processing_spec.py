@@ -156,7 +156,8 @@ def process_spectra(source_list,
 
             # combine masks of all priors if more than one line is used
             if n_mask>0:
-                for n_mask_i in range(1,n_mask):
+                # for n_mask_i in range(1,n_mask): 
+                for n_mask_i in range(1,n_mask+1):  
                     line_i = lines_data["line_name"][n_mask_i].upper()
                     mask_i, _, _ = construct_mask(line_i, this_data, SN_processing)
                     this_data["SPEC_MASK_"+line_i]= Column(mask_i, unit=au.dimensionless_unscaled, description=f'Velocity-integration mask for {line_i}')
