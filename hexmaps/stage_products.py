@@ -343,7 +343,7 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data, noise_mask_df
     # Unpack settings from meta
     # ------------------------------------------------------------------
     use_input_mask = meta.get("use_input_mask", False)
-    use_fixed_vel_mask = meta.get("use_fixed_vel_mask", False)
+    use_fixed_window = meta.get("use_fixed_window", False)
     use_hfs_lines = meta.get("use_hfs_lines", False)
     strict_mask = meta.get("strict_mask", False)
     ref_line_method = meta.get("ref_line", "first")
@@ -376,7 +376,7 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data, noise_mask_df
     #   mask_lines   — which cube lines to OR-combine for the primary mask
     #                  (None signals individual mode)
     #   combinations — list of (op, src) pairs from combination tokens:
-    #                  AND(input), OR(input), AND(fixed), OR(fixed)
+    #                  AND(input), OR(input), AND(window), OR(window)
     # ------------------------------------------------------------------
     mask_lines, combinations = parse_ref_line(ref_line_method, line_names)
 
@@ -423,10 +423,10 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data, noise_mask_df
         )
 
     # ------------------------------------------------------------------
-    # Apply combination tokens AND(input), OR(input), AND(fixed), OR(fixed).
+    # Apply combination tokens AND(input), OR(input), AND(window), OR(window).
     # ------------------------------------------------------------------
     def _get_ext_mask(src):
-        """Fetch the external mask array for 'input' or 'fixed' source."""
+        """Fetch the external mask array for 'input' or 'window' source."""
         if len(input_mask) == 0:
             LOG.error(f"Combination token requires a mask but none is defined in config.")
             return None
@@ -443,8 +443,8 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data, noise_mask_df
         if src == "input" and not use_input_mask:
             LOG.warning(f"{op}(input) in ref_line but use_input_mask = false — skipping.")
             continue
-        if src == "fixed" and not use_fixed_vel_mask:
-            LOG.warning(f"{op}(fixed) in ref_line but use_fixed_vel_mask = false — skipping.")
+        if src == "window" and not use_fixed_window:
+            LOG.warning(f"{op}(window) in ref_line but use_fixed_window = false — skipping.")
             continue
         ext_arr = _get_ext_mask(src)
         if ext_arr is None:
@@ -489,8 +489,8 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data, noise_mask_df
                 )
             LOG.info("Input mask AND-combined (legacy use_input_mask flag).")
 
-    if use_fixed_vel_mask and "fixed" not in handled_srcs:
-        ext_arr = _get_ext_mask("fixed")
+    if use_fixed_window and "window" not in handled_srcs:
+        ext_arr = _get_ext_mask("window")
         if ext_arr is not None:
             if mask_lines is None:
                 for ln in line_masks:
@@ -503,9 +503,9 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data, noise_mask_df
                 mask = (cur & ext_arr) * u.dimensionless_unscaled
                 this_data["SPEC_MASK"] = Column(
                     mask, unit=u.dimensionless_unscaled,
-                    description="Velocity-integration mask (AND fixed velocity mask)",
+                    description="Velocity-integration mask (AND window velocity mask)",
                 )
-            LOG.info("Fixed velocity mask AND-combined (legacy use_fixed_vel_mask flag).")
+            LOG.info("Fixed velocity mask AND-combined (legacy use_fixed_window flag).")
     # HFS mask extension
     lines_hfs = (
         list(set(hfs_data["hfs_name"]))

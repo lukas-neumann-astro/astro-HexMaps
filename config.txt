@@ -72,7 +72,7 @@ folder_savefits = ./saved_fits_files/
 #
 # MASK TABLE (after "# ---- mask ----")
 #   For file mask  : name, description, file_extension, directory
-#   For fixed-vel  : name, description, start_vel, end_vel, unit
+#   For window-vel  : name, description, start_vel, end_vel, unit
 #   (leave section empty if no external mask is used)
 
 [targets]
@@ -96,7 +96,7 @@ spire250,  SPIRE 250 um,      MJy/sr,  _spire250_gauss21.fits,  data/
 # Example file mask (comment out if unused):
 # co_mask, CO signal mask, _co_mask.fits, data/
 #
-# Example fixed-velocity mask (comment out if unused):
+# Example fixed velocity window mask (comment out if unused):
 #vel_mask, Fixed velocity window, -100, 100, km/s
 
 # Example noise velocity windows (comment out if unused):
@@ -143,12 +143,12 @@ CDELT_SHUFF = 4000.0
 # Combination tokens (comma-separated, append to any keyword above):
 #   AND(input)   - AND-combine the ref_line mask with the input mask
 #   OR(input)    - OR-combine the ref_line mask with the input mask
-#   AND(fixed)   - AND-combine the ref_line mask with the fixed velocity mask
-#   OR(fixed)    - OR-combine the ref_line mask with the fixed velocity mask
+#   AND(window)  - AND-combine the ref_line mask with the fixed velocity window
+#   OR(window)   - OR-combine the ref_line mask with the fixed velocity window
 #
 # Examples:
 #   ref_line = 12co21, AND(input)     -> 12co21 S/N mask AND input mask
-#   ref_line = first, OR(fixed)       -> first-line mask OR fixed window
+#   ref_line = first, OR(window)       -> first-line mask OR fixed window
 #   ref_line = all, AND(input)
 ref_line = first
 
@@ -162,7 +162,7 @@ strict_mask = false
 use_input_mask = false
 
 # Use a fixed velocity window defined in the [mask] table above
-use_fixed_vel_mask = false
+use_fixed_window = false
 
 # Use explicit velocity windows (noise_mask rows in the [mask] table) for
 # noise (RMS) estimation instead of using channels outside the signal mask.

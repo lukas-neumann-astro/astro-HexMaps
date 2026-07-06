@@ -20,7 +20,7 @@ For each cube, the pipeline:
      including the same ref_line combination logic, the strict spatial
      filter (here implemented as 2-D connected-component labelling per
      channel, the rectangular-grid equivalent of the hex-grid distance-based
-     filter), HFS mask extension, and the use_input_mask / use_fixed_vel_mask
+     filter), HFS mask extension, and the use_input_mask / use_fixed_window
      external-mask options. Before masking, two additional steps constrain
      the valid pixel area:
        a. Overlay footprint masking: pixels where the overlay cube has no
@@ -417,7 +417,7 @@ def build_hfs_mask_ppv(mask, line_name, hfs_data, delta_v_kms):
 def fixed_velocity_mask_ppv(shape, ov_hdr, mask_start, mask_end, mask_unit):
     """
     Build a binary PPV mask from a fixed velocity window, the array-native
-    equivalent of stage_regrid's use_fixed_vel_mask handling.
+    equivalent of stage_regrid's use_fixed_window handling.
 
     Parameters
     ----------
@@ -777,7 +777,7 @@ def run_moments_ppv(
     This function reproduces the mask-construction orchestration of
     stage_products.run_products (ref_line selection, ref_line combination
     modes, strict_mask, HFS extension, use_input_mask /
-    use_fixed_vel_mask) exactly, but operates on convolved PPV cubes
+    use_fixed_window) exactly, but operates on convolved PPV cubes
     (get_convolved_ppv_cube) and computes moments with get_mom_maps_ppv
     instead of working through the hex-grid .ecsv table.
 
@@ -804,7 +804,7 @@ def run_moments_ppv(
                    from channels outside the integration mask.
     """
     use_input_mask = meta.get("use_input_mask", False)
-    use_fixed_vel_mask = meta.get("use_fixed_vel_mask", False)
+    use_fixed_window = meta.get("use_fixed_window", False)
     if input_mask is None:
         input_mask = []
     use_hfs_lines = meta.get("use_hfs_lines", False)
@@ -983,15 +983,15 @@ def run_moments_ppv(
             mask = apply_strict_mask_ppv(mask.astype(int))
 
     # ------------------------------------------------------------------
-    # Apply combination tokens AND(input), OR(input), AND(fixed), OR(fixed).
+    # Apply combination tokens AND(input), OR(input), AND(window), OR(window).
     # ------------------------------------------------------------------
     def _get_ppv_ext(src):
-        """Load external mask for 'input' or 'fixed' source."""
+        """Load external mask for 'input' or 'window' source."""
         if len(input_mask) == 0:
             LOG.error(f"Combination token requires a mask but none is defined in config.")
             return None
-        if src == "fixed":
-            if not use_fixed_vel_mask:
+        if src == "window":
+            if not use_fixed_window:
                 return None
             mu   = input_mask["mask_unit"].iloc[0]
             mst  = float(input_mask["mask_start"].iloc[0]) * au.Unit(mu)
@@ -1016,8 +1016,8 @@ def run_moments_ppv(
         if src == "input" and not use_input_mask:
             LOG.warning(f"{op}(input) in ref_line but use_input_mask = false — skipping.")
             continue
-        if src == "fixed" and not use_fixed_vel_mask:
-            LOG.warning(f"{op}(fixed) in ref_line but use_fixed_vel_mask = false — skipping.")
+        if src == "window" and not use_fixed_window:
+            LOG.warning(f"{op}(window) in ref_line but use_fixed_window = false — skipping.")
             continue
         ext_arr = _get_ppv_ext(src)
         if ext_arr is None:
@@ -1046,8 +1046,8 @@ def run_moments_ppv(
                 mask = mask & ext_arr
             LOG.info("Input mask AND-combined with PPV mask (legacy flag).")
 
-    if use_fixed_vel_mask and "fixed" not in handled_srcs:
-        ext_arr = _get_ppv_ext("fixed")
+    if use_fixed_window and "window" not in handled_srcs:
+        ext_arr = _get_ppv_ext("window")
         if ext_arr is not None:
             if mask_lines is None:
                 for ln in ppv_line_masks:
@@ -1241,7 +1241,7 @@ def run_fits(
     cubes      : pd.DataFrame — cube definitions from KeyHandler
     params     : dict         — target geometry from TargetHandler
     input_mask : pd.DataFrame, optional — mask definition from KeyHandler
-                (required if use_input_mask or use_fixed_vel_mask is set)
+                (required if use_input_mask or use_fixed_window is set)
     hfs_data   : pd.DataFrame or None, optional — hyperfine data from KeyHandler
                 (required if use_hfs_lines is set)
     """

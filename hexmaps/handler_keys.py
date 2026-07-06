@@ -146,7 +146,7 @@ class KeyHandler:
 
         [resolution]/[masking]/[spectral]/[output]/[structure] are parsed
         before the [targets]/maps/cubes/mask tables so that masking flags
-        (use_fixed_vel_mask etc.) are available when parsing the mask table.
+        (use_fixed_window etc.) are available when parsing the mask table.
         _resolve_resolution runs last because it needs both overlay_file
         (set by _load_targets_and_tables) and target distances (set by
         _load_target_definitions).
@@ -354,7 +354,7 @@ class KeyHandler:
         SN_processing     : list  — [low_SN, high_SN] thresholds
         strict_mask       : bool  — apply spatial connectivity filter
         use_input_mask    : bool  — use an external FITS mask from the [mask] table
-        use_fixed_vel_mask: bool  — use a fixed velocity-window mask
+        use_fixed_window: bool  — use a fixed velocity-window mask
         use_fixed_noise_mask: bool — use explicit velocity windows for noise estimation
         use_hfs_lines     : bool  — apply HFS correction (requires hfs_file)
         fov_erosion_beams : float — FOV erosion in units of the beam FWHM (default 0.5);
@@ -429,8 +429,8 @@ class KeyHandler:
         self.meta["use_input_mask"] = (
             _get("masking", "use_input_mask", "false").lower() == "true"
         )
-        self.meta["use_fixed_vel_mask"] = (
-            _get("masking", "use_fixed_vel_mask", "false").lower() == "true"
+        self.meta["use_fixed_window"] = (
+            _get("masking", "use_fixed_window", "false").lower() == "true"
         )
         self.meta["use_fixed_noise_mask"] = (
             _get("masking", "use_fixed_noise_mask", "false").lower() == "true"
@@ -668,7 +668,7 @@ class KeyHandler:
         # Build mask DataFrame with the appropriate column set
         cols = (
             MASK_COLUMNS_VEL
-            if self.meta.get("use_fixed_vel_mask")
+            if self.meta.get("use_fixed_window")
             else MASK_COLUMNS_FILE
         )
         if mask_rows:

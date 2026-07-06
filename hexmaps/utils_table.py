@@ -519,10 +519,10 @@ def parse_ref_line(ref_line_method, line_names):
         (defined in the ``[mask]`` table with ``use_input_mask = true``).
     ``OR(input)``
         OR-combine the ref_line mask with the external input mask.
-    ``AND(fixed)``
+    ``AND(window)``
         AND-combine the ref_line mask with the fixed velocity-window mask
-        (defined in the ``[mask]`` table with ``use_fixed_vel_mask = true``).
-    ``OR(fixed)``
+        (defined in the ``[mask]`` table with ``use_fixed_window = true``).
+    ``OR(window)``
         OR-combine the ref_line mask with the fixed velocity-window mask.
 
     Combination tokens are stripped from the token list before line
@@ -532,10 +532,10 @@ def parse_ref_line(ref_line_method, line_names):
     --------
     ``ref_line = 12co21, AND(input)``
         Build the mask from 12co21, then AND with the input mask.
-    ``ref_line = first, OR(fixed)``
+    ``ref_line = first, OR(window)``
         Build the mask from the first line, then OR with the fixed window.
-    ``ref_line = all, AND(input), AND(fixed)``
-        Union of all line masks, ANDed with both the input and fixed masks.
+    ``ref_line = all, AND(input), AND(window)``
+        Union of all line masks, ANDed with both the input and window masks.
 
     Parameters
     ----------
@@ -553,7 +553,7 @@ def parse_ref_line(ref_line_method, line_names):
         Zero or more ``(operation, source)`` pairs describing how to
         combine the primary mask with external masks.
         *operation* is ``"AND"`` or ``"OR"``.
-        *source* is ``"input"`` or ``"fixed"``.
+        *source* is ``"input"`` or ``"window"``.
     """
     if not line_names:
         raise ValueError("parse_ref_line: line_names is empty.")
@@ -568,7 +568,7 @@ def parse_ref_line(ref_line_method, line_names):
     for tok in combo_tokens:
         tok_up = tok.upper()
         op     = tok_up.split("(")[0]          # "AND" or "OR"
-        src    = tok_up[len(op)+1:-1].lower()  # "input" or "fixed"
+        src    = tok_up[len(op)+1:-1].lower()  # "input" or "window"
         combinations.append((op, src))
 
     # Rejoin the non-combo tokens for the existing resolution logic
