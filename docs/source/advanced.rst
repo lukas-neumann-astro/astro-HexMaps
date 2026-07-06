@@ -1,98 +1,162 @@
-Advanced Setup
-==============
+Advanced Configuration
+======================
 
-The configure file comes with a set of advanced specification. These can be adjusted in :ref:`step2` of the file. Here we provide details on the individual advanced options.
-
-Guide for advanced settings
----------------------------
-
-Overall Parameters
-^^^^^^^^^^^^^^^^^^
+This page documents options that are less commonly changed but useful for
+specific use cases.
 
 
-..  code-block::
+Resolution Modes
+----------------
 
-	NAXIS_shuff = 200
-	CDELT_SHUFF = 4000.  #m/s
-	spacing_per_beam = 2 #default, use half beam spacing
+.. code-block:: ini
 
-	# give number (in units deg) or set to "auto"
-	max_rad = "auto" #default extension of the map in deg (increase, if you map is larger)
+   [resolution]
+   resolution = angular    # arcseconds (default)
+   # resolution = physical # target_res in parsecs, converted via distance
+   # resolution = native   # use the overlay beam as-is
 
-
-
-Resolution
-^^^^^^^^^^
-
-..  code-block::
-
-	#angular: use target_res in as
-	#physical: convert target_res (in pc) to as
-	#native: use the angular resolution of the overlay image
-	resolution = 'angular'
-
-Save Products
-^^^^^^^^^^^^^
-
-..  code-block::
-
-	# Save the convolved cubes & bands
-	save_fits = False
-
-	# Save the moment maps
-	save_mom_maps = True
-
-	#folder to save fits files in
-	folder_savefits="./saved_FITS_files/"
+For ``resolution = physical``, set ``target_res`` in **parsecs**. HexMaps
+converts to arcseconds per source using its distance from
+``target_definitions.txt``.
 
 
-Line Masking
-^^^^^^^^^^^^
+Grid Parameters
+---------------
 
-.. code-block::
+.. code-block:: ini
 
-	#Define which line to use as reference line for the spectral processing
-	#"first": use first line in cube_list as reference line
-	#"<LINE_NAME>": Use line name as reference line
-	#"all": Use all lines in cube for mask
-	#n: (integer) use first n lines as reference. n=0 is same result as "first".
-	ref_line = "first"
+   [resolution]
+   pixels_per_beam = 2       # spacing = target_res / pixels_per_beam
+   max_rad         = auto    # "auto" derives radius from overlay footprint
+   NAXIS_shuff     = 200     # channels in the shuffled spectrum
+   CDELT_SHUFF     = 4000.0  # channel width of shuffled spectrum [m/s]
 
-	#define upper and lower mask threshold (S/N)
-	SN_processing = [2,4]
-	strict_mask= False
 
-Moment Calculations
-^^^^^^^^^^^^^^^^^^^
+FOV Edge Erosion
+----------------
 
-.. code-block::
+Pixels near the map boundary are computed from a partial kernel and are
+biased. HexMaps trims these by eroding the footprint:
 
-	#define SN threshold for Mom1, Mom2 and EW calculation (for individual lines)
-	mom_thresh = 5
+.. code-block:: ini
 
-	#differentiate between "fwhm", "sqrt", or "math"
-	# math: use mathematical definition
-	# sqrt: take square-root of mom2
-	# fwhm: convert sqrt(mom2) to fwhm
-	mom2_method = "fwhm"
+   [masking]
+   fov_erosion_beams = 0.5   # trim 0.5 × beam FWHM (default)
+   # fov_erosion_beams = 0   # disable — keep full overlay footprint
+   # fov_erosion_beams = 1.0 # conservative — trim one full beam
+
+The same erosion is applied to the hex-grid, moment maps, and FITS outputs.
+
+
+Reference Line and Mask Combinations
+--------------------------------------
+
+The ``ref_line`` key controls both which lines define the primary S/N mask
+and how that mask is combined with any external masks.
+
+**Line selection:**
+
+.. code-block:: ini
+
+   ref_line = first         # first cube (default)
+   ref_line = 12co21        # specific named line
+   ref_line = all           # OR-combine all lines
+   ref_line = 2             # first 2 lines
+   ref_line = individual    # one mask per line, applied independently
+
+**Combination tokens** (append to any line selection, comma-separated):
+
+.. code-block:: ini
+
+   AND(input)   # AND with external input mask (use_input_mask must be true)
+   OR(input)    # OR  with external input mask
+   AND(fixed)   # AND with fixed velocity-window mask (use_fixed_vel_mask = true)
+   OR(fixed)    # OR  with fixed velocity-window mask
+
+Examples:
+
+.. code-block:: ini
+
+   ref_line = 12co21, AND(input)
+   ref_line = first, OR(fixed)
+   ref_line = all, AND(input), AND(fixed)
+
+The external masks are defined in the ``# ---- mask ----`` table and
+enabled by ``use_input_mask`` / ``use_fixed_vel_mask``.
+
+**Two-level S/N mask:**
+
+.. code-block:: ini
+
+   SN_processing   = 2, 4   # [low_SN, high_SN] thresholds
+   strict_mask     = false  # if true, remove spatially isolated detections
+   conseq_channels = 3      # min consecutive channels for a valid mask signal
+
+
+Velocity Windows
+----------------
+
+Explicit velocity windows for signal integration and noise estimation:
+
+.. code-block:: ini
+
+   # ---- mask ----
+   vel_mask,   Signal window,  -200,  200,   km/s
+   noise_mask, Noise blue,    -300, -150,   km/s
+   noise_mask, Noise red,      150,  300,   km/s
+
+Enable with:
+
+.. code-block:: ini
+
+   [masking]
+   use_fixed_vel_mask   = true
+   use_fixed_noise_mask = true
+
 
 Spectral Smoothing
-^^^^^^^^^^^^^^^^^^
+------------------
 
-.. code-block::
+.. code-block:: ini
 
-	"""
-	"default": Do not perform any spectral smoothing
-	"overlay": Perform spectral smoothing to spectral resolution of overlay cube
-	n: float – convolve to spectral resolution n [km/s] !!!Not yet correctly implemented -> 	highly oversampled
-	"""
-	spec_smooth = "default"
+   [spectral]
+   spec_smooth        = default   # no smoothing
+   # spec_smooth      = overlay   # smooth to overlay spectral resolution
+   # spec_smooth      = 5.0       # convolve to 5.0 km/s
 
-	"""
-	define the way the spectral smoothing should be performed:
-	"binned": binn channels together (to nearest integer of ratio theta_target/theta_nat)
-	"gauss": perform convolution with gaussian kernel (theta_target^2-theta_nat^2)**0.5
-	!!!! Warning, gaussian smoothing seems to systematicaly underestimate the rms by 10-15%
-	"combined": do the binned smoothing first (to nearest integer ratio) and then the rest via 	Gauss
-	"""
-	spec_smooth_method = "binned"
+   spec_smooth_method = binned    # recommended
+   # spec_smooth_method = gauss       # ±10-15% RMS bias; avoid for science
+   # spec_smooth_method = combined    # bin first, then Gaussian residual
+
+
+Hyperfine Structure Correction
+--------------------------------
+
+For lines with hyperfine structure (HCN, N₂H⁺, CN, CCH), HexMaps can
+extend the signal mask to satellite components:
+
+.. code-block:: ini
+
+   [paths]
+   hfs_file = keys/hfs_lines.txt
+
+   [masking]
+   use_hfs_lines = true
+
+Add entries for each line with hyperfine structure to ``hfs_lines.txt``.
+
+
+Database Fill Mode
+------------------
+
+To add new maps or cubes to an existing ``.ecsv`` without re-running the
+full pipeline:
+
+.. code-block:: ini
+
+   [structure]
+   structure_creation = fill
+   fname_fill = ngc5194_hexmaps_27p0as_2025_01_01.ecsv
+
+HexMaps opens the existing file and adds only the maps/cubes that are not
+yet present.
