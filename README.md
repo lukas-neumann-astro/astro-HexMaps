@@ -85,7 +85,7 @@ reproject  radio_beam  spectral_cube  scikit-image
 # From PyPI (once published)
 pip install astro-hexmaps
 
-# From GitHub — latest development version
+# From GitHub — latest version
 pip install git+https://github.com/PhangsTeam/astro-HexMaps.git
 
 # Editable / development install
@@ -107,7 +107,7 @@ pip install -e ".[dev]"
 hexmaps --init
 
 # Or target a specific directory
-hexmaps --init (optionally --workdir ~/my_survey)
+hexmaps --init --workdir ~/my_survey
 cd ~/my_survey
 ```
 
@@ -120,26 +120,21 @@ To try the pipeline immediately with real data, download the bundled
 NGC 5194 example dataset (~46 MB):
 
 ```bash
-hexmaps --download-example (optionally --workdir ~/my_survey)
+hexmaps --download-example --workdir ~/my_survey
 ```
 
-This fetches six FITS files (CO(2–1) cube, CO(1–0) cube, SPIRE 250 µm map,
-and their associated products) into `~/my_survey/data/`. The bundled
+This fetches the input FITS files (CO(2–1) cube, CO(1–0) cube, SPIRE 250 µm map
+and associated uncertainty files) into `~/my_survey/data/`. The bundled
 `config.txt` is already configured to use these files, so you can run the
-pipeline straight away after downloading.
-
-Use `--force` to overwrite files that already exist:
-
-```bash
-hexmaps --download-example (optionally --workdir ~/my_survey) --force
-```
+pipeline straight away after downloading. Use `--force` to re-download
+existing files.
 
 ### 3 — Edit your configuration
 
 | File | What to configure | How often |
-|------|-------------------|-----------| 
+|------|-------------------|-----------|
 | `config.txt` | data directory, source list, overlay cube, maps/cubes, target resolution, masking, output flags | every run |
-| `keys/target_definitions.txt` | sky coordinates, distance, inclination per target | only edit if new target used in config |
+| `keys/target_definitions.txt` | sky coordinates, distance, inclination per target | only when adding new targets |
 | `keys/hfs_lines.txt` *(optional)* | Hyperfine structure line definitions | rarely |
 
 `config.txt` replaces the `PyStructure.conf` file of the old PyStructure.
@@ -203,15 +198,15 @@ astro-HexMaps/                       ← git repository root (pip install this)
 │   ├── download_example.py          --download-example data fetcher
 │   ├── cli.py                       hexmaps console-script entry point
 │   ├── test_hexmaps.py              unit and integration tests
-│   └── templates/                   ← template files to initialise working directory
-│   │   ├── config.txt              
-│   │   ├── run_hexmaps.py              
-│   │   ├── keys                    
-│   │   │   ├── target_definitions.txt  
-│   │   │   ├── hfs_lines.txt           
+│   └── templates/                   template files copied by --init
+│       ├── config.txt
+│       ├── run_hexmaps.py
+│       └── keys/
+│           ├── target_definitions.txt
+│           └── hfs_lines.txt
 ├── config.txt                       ← example / template config file
 ├── keys/
-│   ├── target_definitions.txt       ← source geometry table
+│   ├── target_definitions.txt       ← source geometry table (NGC 5194 example)
 │   └── hfs_lines.txt                ← hyperfine structure definitions
 ├── analysis/
 │   ├── hexmaps_analysis.py          HexMapsAnalysis class: quicklook plots

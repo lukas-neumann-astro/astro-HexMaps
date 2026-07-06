@@ -1,157 +1,231 @@
-Guide
-=======
+Configuration Guide
+===================
 
-The configure File
-------------------
+This page walks through ``config.txt`` section by section. Every key has a
+sensible default; you only need to set what differs from those defaults.
 
-Here we go through the configuration file step-by-step and explain the necessary user input.
-
-Step 1
-^^^^^^
-In the first step, the user need to specify some of the key paths as well as the overlay 3D cube to be used.
-
-.. code-block::
-
-    ####################################
-    # Step 1: Define the correct Paths #
-    ####################################
-
-    # <path to directory with the data files>
-    data_dir = "data/"
-
-    # <filename of geometry file>
-    geom_file = "List_Files/geometry.txt"
-    # <filename of overlay or mask> #should be stored in data_dir
-    overlay_file = "_12co21.fits"
-
-    # <Output Directory for Dictionaries>
-    out_dic = "Output/"
+``config.txt`` combines what used to be three separate files in the old
+PyStructure (``master_key.txt``, ``data_key.txt``, ``config_key.txt``) into
+a single INI-style file with named sections.
 
 
+[meta]
+------
 
-* ``geom_file`` The geometry file contains information on the source properties (see :ref:`geomFile` for more details).
-* ``overlay_file`` The FITS file extension of the overlay 3D data cube to be used. The overlay is used to define the spatial extend of the hexagonal grid.
+Metadata stored in the output ``.ecsv`` table header for provenance.
 
-.. NOTE::
-    
-    All data filenames must have the following convention:
-    
-    ``<source_name><file_extension>``
-    
-    For example: ``ngc5194_co21.fits``, where ngc5194 is the source name and _co21.fits the file extension.
-    
-    The ``geometry.txt`` file must contain the source name.
-    
-    
-.. _step2:
+.. code-block:: ini
 
-Step 2
-^^^^^^
-In the next step, the targeted angular resolution needs to be provided. By default, **this needs to be given in arcsec**.
+   [meta]
+   user     = Dr. Blocksberg
+   comments = Example HexMaps run
 
-.. code-block::
 
-    #####################################
-    # Step 2: Set the Target Resolution #
-    #####################################
-    # Set the target resolution for all data in arcseconds (if resolution set to angular)
-    target_res = 27.
+[paths]
+-------
 
-Step 3
-^^^^^^
+All file and directory paths. Relative paths are resolved relative to the
+location of ``config.txt``.
 
-In this step, you need to define the source or list of sources. Note that all datafiles must start with the source name as specified in this step.
+.. code-block:: ini
 
-.. code-block::
+   [paths]
+   data_dir        = data/
+   out_dir         = output/
+   folder_savefits = ./saved_fits_files/
 
-    #####################################
-    # Step 3: Set Sources              #
-    #####################################
-    #can be single source (e.g. cloud or galaxy), or list of strings: sources = "ngc5194", "ngc5457"
-    sources = "ngc5194"
+   # Defaults to keys/target_definitions.txt next to config.txt
+   # geom_file = keys/target_definitions.txt
 
-Step 4
-^^^^^^
+   # Only needed if use_hfs_lines = true
+   # hfs_file  = keys/hfs_lines.txt
 
-In this step, we define the list of 2D data we want to include in the PyStructure.
-It is not required to include any 2D data.
 
-.. code-block::
+[sources] and [overlay]
+------------------------
 
-    #####################################
-    # Step 4: Define Bands              #
-    #####################################
-    # Column 1: short name of band
-    # Column 2: description for database
-    # Column 3: units
-    # Column 4: extension
-    # Column 5: path to files
-    # Column 6: extension to uc file
-    spire250,    SPIRE250,    MJy/sr,    _spire250_gauss21.fits,    ./data/,    _spire250_gauss21_unc.fits
-    
-.. NOTE::
-    
-    If no uncertainty file extist, simply write ``not_included`` for the uncertainty file extension.
-    
-Step 5
-^^^^^^
+.. code-block:: ini
 
-The final step consists of specifying the list of 3D data cubes. Here at least one data cube must be provided.
+   [sources]
+   sources = ngc5194
 
-.. code-block::
+   [overlay]
+   overlay_file = _12co21.fits
 
-    #####################################
-    # Step 5: Define Cubes              #
-    #####################################
-    # Column 1: short name of cube
-    # Column 2: description for database
-    # Column 3: units
-    # Column 4: extension
-    # Column 5: path to files
-    # Column 6 optional: extension, if 2D map provided
-    # Column 7 optional: extension err, if 2D map provided
-    12co21, 12CO2-1, K, _12co21.fits, data/
-    12co10, 12CO1-0, K, _12co10.fits, data/
+``sources`` is a comma-separated list of source names. Each name is
+prepended to the file extensions in the map and cube tables to form full
+filenames. ``overlay_file`` defines the 3D spectral cube that sets the
+spatial extent and spectral axis of the hexagonal grid.
+
+
+Map and Cube Tables
+-------------------
+
+Maps (2D) and cubes (3D) are defined as comma-separated table rows
+immediately after their comment markers inside the ``[sources]`` section.
+
+.. code-block:: ini
+
+   # ---- maps ----
+   # name,  description,  unit,  file_extension,  directory,  [uc_extension]
+   spire250,  SPIRE 250 um,  MJy/sr,  _spire250_gauss21.fits,  data/,  _spire250_gauss21_unc.fits
+
+   # ---- cubes ----
+   # name,  description,  unit,  file_extension,  directory,  [map_ext],  [map_uc_ext]
+   12co21,  12CO(2-1),  K,  _12co21.fits,  data/
+   12co10,  12CO(1-0),  K,  _12co10.fits,  data/
 
 .. IMPORTANT::
-    
-    By default, the **first cube specified in this list will be used as prior line** to define a spectral and spatial mask over which the 3D data cubes will be postprocessed to determine the moment-0 and peak temperature maps. It is therefore adviced to select the brightest line as the first entry.
-    
-Additional Files
-----------------
+
+   By default, the **first cube in the list is used as the reference line**
+   for mask construction. Put your brightest, highest-SNR line first.
+
+
+Mask Table
+----------
+
+An optional mask section supports three types of entries:
+
+.. code-block:: ini
+
+   # ---- mask ----
+
+   # External FITS mask (sampled onto the hex grid):
+   # name,  description,  file_extension,  directory
+   # co_mask,  CO signal mask,  _co_mask.fits,  data/
+
+   # Fixed velocity window (signal integration range):
+   # vel_mask,  description,  v_start,  v_end,  unit
+   # vel_mask,  Signal window,  -200,  200,  km/s
+
+   # Noise velocity windows (for RMS estimation):
+   # noise_mask,  description,  v_start,  v_end,  unit
+   # noise_mask,  Noise blue,  -300,  -150,  km/s
+   # noise_mask,  Noise red,    150,   300,  km/s
+
+
+[resolution]
+------------
+
+.. code-block:: ini
+
+   [resolution]
+   target_res      = 27.0      # arcsec (for resolution = angular)
+   resolution      = angular   # angular | physical | native
+   pixels_per_beam = 2         # hex grid spacing in units of beam FWHM
+   max_rad         = auto      # map radius in degrees, or "auto"
+   NAXIS_shuff     = 200       # channels in shuffled spectrum
+   CDELT_SHUFF     = 4000.0    # channel width of shuffled spectrum [m/s]
+
+``resolution`` controls how ``target_res`` is interpreted:
+
+* ``angular`` — use ``target_res`` directly in arcseconds
+* ``physical`` — convert ``target_res`` (in pc) to arcseconds using the
+  source distance from ``target_definitions.txt``
+* ``native`` — use the native beam of the overlay cube
+
+
+.. _step2:
+
+[masking]
+---------
+
+.. code-block:: ini
+
+   [masking]
+   ref_line             = first
+   SN_processing        = 2, 4
+   strict_mask          = false
+   use_input_mask       = false
+   use_fixed_vel_mask   = false
+   use_fixed_noise_mask = false
+   use_hfs_lines        = false
+   fov_erosion_beams    = 0.5
+   mom_thresh           = 5
+   conseq_channels      = 3
+   mom2_method          = fwhm
+
+``ref_line`` selects which lines build the signal mask:
+
+* ``first`` — first cube in the cube list (default)
+* ``<LINE_NAME>`` — a specific named line, e.g. ``12co21``
+* ``all`` — OR-combine all cubes
+* ``n`` — OR-combine the first *n* cubes
+* ``individual`` — build and apply one mask per line independently
+
+**Combination tokens** can be appended to any keyword above:
+
+* ``AND(input)`` — AND-combine with the external input mask
+* ``OR(input)``  — OR-combine with the external input mask
+* ``AND(fixed)`` — AND-combine with the fixed velocity-window mask
+* ``OR(fixed)``  — OR-combine with the fixed velocity-window mask
+
+Examples:
+
+.. code-block:: ini
+
+   ref_line = 12co21, AND(input)       # 12co21 mask AND external mask
+   ref_line = first, OR(fixed)         # first-line mask OR fixed window
+   ref_line = all, AND(input)          # union of all lines, limited by input
+
+
+[spectral]
+----------
+
+.. code-block:: ini
+
+   [spectral]
+   spec_smooth        = default   # default | overlay | <float km/s>
+   spec_smooth_method = binned    # binned | gauss | combined
+
+.. WARNING::
+
+   Gaussian spectral smoothing (``spec_smooth_method = gauss``) can
+   underestimate RMS by 10–15%. Use ``binned`` or ``combined`` instead.
+
+
+[output]
+--------
+
+.. code-block:: ini
+
+   [output]
+   save_cubes    = false   # save convolved PPV cubes (fits stage)
+   save_mom_maps = true    # save moment map FITS files
+   save_maps     = true    # save 2D band map FITS files
+   save_mask     = false   # save the PPV mask as a FITS cube
+
+
+[structure]
+-----------
+
+.. code-block:: ini
+
+   [structure]
+   structure_creation = default   # default | fill | archive
+   # fname_fill = ngc5194_hexmaps_27p0as_2025_01_01.ecsv
+
+* ``default`` — create or overwrite the ``.ecsv`` file each run
+* ``fill`` — open an existing file and add only missing maps/cubes
+* ``archive`` — create a new versioned file each run
+
 
 .. _geomFile:
 
-The geometry file
-^^^^^^^^^^^^^^^^^
+target_definitions.txt
+-----------------------
 
-The ``geometry.txt`` file is a crucial component of the PyStructure. Here, the source properties need to be defined.
+The ``keys/target_definitions.txt`` file lists source geometry for all
+targets that may ever be processed. Add sources here once; only those
+listed in ``config.txt [sources]`` will be processed on any given run.
 
-.. code-block::
+.. code-block:: text
 
-    # column 1: name
-    # column 2: R.A. center [decimal degrees J2000]
-    # column 3: Dec. center [decimal degrees J2000]
-    # column 4: distance [Mpc]
-    # column 5: uncertainty in distance
-    # column 6: inclination [deg] (LEDA)
-    # column 7: uncertainty in inclination
-    # column 8: position angle [deg] (LEDA)
-    # column 9: uncertainty in position angle
-    # column 10: radius 25th magnitude isophote [arcmin]
-    # column 11: uncertainty in radius 25th
-    # column 12: ref for position angle
-    # Attach comments with #
-    # Distances and uncertainties from Brent Groves' NED querying program.
-    # Inclinations and PA from Maria's compilation
-    # Radius from Leda
-    #-------------------------------------------------------------
-    # !!!Make sure columns separated by only one tab!!!
-    #-------------------------------------------------------------
-    M82    148.969687    69.679383    3.5    0.2    77.0    NaN    62    NaN    5.60    0.1
-    ngc0628    24.1739458    15.7836619    9.0    0.14    7.0    NaN    20.0    NaN    5.00    0.05
-    ngc2903    143.042125    21.500833    8.7    0.9    65.0    NaN    204.0    NaN    6.01    0.05
-    
-    
-* The name of the source needs to match the source name of the data files
-* The source properties are tailored to match usefull properties characterizing nearby galaxies. Therefore, parameters, such as inclination or position angle, might not be meaningfull if you work on other types of sources (e.g. Galactic clouds). In this case, it is adviced to enter ``0`` or ``NaN`` instead.
+   # source, ra_ctr, dec_ctr, dist_mpc, e_dist_mpc,
+   #         incl_deg, e_incl_deg, posang_deg, e_posang_deg, r25, e_r25
+   ngc5194, 202.4696, 47.1952, 8.58, 0.10, 22.0, 3.0, 173.0, 3.0, 3.54, 0.05
+
+Galaxy geometry columns (``incl_deg``, ``posang_deg``, ``r25``) are
+optional. Leave them blank or omit them for non-galaxy targets such as
+Milky Way molecular clouds — the pipeline will skip deprojection and
+print a warning.
