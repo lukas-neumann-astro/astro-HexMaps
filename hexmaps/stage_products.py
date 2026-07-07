@@ -385,7 +385,11 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data,
             if ref_line_vmean is None:
                 ref_line_vmean = vmean_line
 
-        # Apply external masks per-line if requested
+        # Apply external masks per-line if requested.
+        # When use_hfs_lines is True and a line has HFS satellite entries,
+        # the external mask is first duplicated and shifted to each satellite
+        # frequency before combining, so the external mask covers the same
+        # spectral extent as the per-line S/N mask.
         if use_input:
             ext_tag = _input_tag()
             if ext_tag is None:
@@ -394,12 +398,20 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data,
                 ext_arr = _get_ext_col(ext_tag)
                 if ext_arr is not None:
                     for line in mask_lines:
-                        # get line-specific mask and combine with external input mask
+                        ext_line = ext_arr
+                        if use_hfs_lines and hfs_data is not None:
+                            ext_hfs = _build_hfs_mask(
+                                ext_arr.astype(float), line, hfs_data, this_data
+                            )
+                            if ext_hfs is not None:
+                                ext_line = np.asarray(
+                                    ext_hfs.value if hasattr(ext_hfs, "value") else ext_hfs
+                                ).astype(int)
+                                LOG.info(f"External input mask shifted to HFS frequencies for {line}.")
                         mask_line = this_data[f"SPEC_MASK_{line.upper()}"].astype(int)
                         mask_line = (
-                            (mask_line & ext_arr) if combinator == "AND" else (mask_line | ext_arr)
+                            (mask_line & ext_line) if combinator == "AND" else (mask_line | ext_line)
                         ) * au.dimensionless_unscaled
-                        # update line-specific mask in database
                         this_data[f"SPEC_MASK_{line.upper()}"] = Column(
                             mask_line,
                             unit=au.dimensionless_unscaled,
@@ -414,12 +426,20 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data,
                 ext_arr = _get_ext_col(ext_tag)
                 if ext_arr is not None:
                     for line in mask_lines:
-                        # get line-specific mask and combine with external input mask
+                        ext_line = ext_arr
+                        if use_hfs_lines and hfs_data is not None:
+                            ext_hfs = _build_hfs_mask(
+                                ext_arr.astype(float), line, hfs_data, this_data
+                            )
+                            if ext_hfs is not None:
+                                ext_line = np.asarray(
+                                    ext_hfs.value if hasattr(ext_hfs, "value") else ext_hfs
+                                ).astype(int)
+                                LOG.info(f"External window mask shifted to HFS frequencies for {line}.")
                         mask_line = this_data[f"SPEC_MASK_{line.upper()}"].astype(int)
                         mask_line = (
-                            (mask_line & ext_arr) if combinator == "AND" else (mask_line | ext_arr)
-                        ) * au.dimensionless_unscaled                        
-                        # update line-specific mask in database
+                            (mask_line & ext_line) if combinator == "AND" else (mask_line | ext_line)
+                        ) * au.dimensionless_unscaled
                         this_data[f"SPEC_MASK_{line.upper()}"] = Column(
                             mask_line,
                             unit=au.dimensionless_unscaled,
@@ -427,26 +447,6 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data,
                         )
                     LOG.info(f"Individual masks {combinator} velocity-window mask.")
 
-        # HFS mask extension
-        lines_hfs = (
-            list(set(hfs_data["hfs_name"]))
-            if (use_hfs_lines and hfs_data is not None)
-            else []
-        )
-        if use_hfs_lines and hfs_data is not None:
-            for jj in range(n_lines):
-                if line_names[jj] in lines_hfs:
-                    LOG.info(f"Building HFS mask for {line_names[jj]}.")
-                    mask_line = this_data[f"SPEC_MASK_{line.upper()}"].astype(int)
-                    mask_line_hfs = _build_hfs_mask(
-                        mask_line, line_names[jj], hfs_data, this_data
-                    )
-                    if mask_line_hfs is not None:
-                        this_data[f"SPEC_MASK_{line_names[jj].upper()}"] = Column(
-                            mask_line_hfs,
-                            unit=au.dimensionless_unscaled,
-                            description=f"HFS mask for {line_names[jj].upper()}",
-                        )
 
     # ---- combined mask mode ---------------------------------------------
     else:

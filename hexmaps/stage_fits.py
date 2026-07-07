@@ -909,16 +909,32 @@ def run_moments_ppv(
             if strict_mask:
                 lm = apply_strict_mask_ppv(lm)
 
-            # Combine with external masks per-line
+            # Combine with external masks per-line.
+            # When use_hfs_lines is True and the line has HFS satellite entries,
+            # the external mask is first duplicated and shifted to each satellite
+            # frequency before combining, so it covers the same spectral extent
+            # as the per-line S/N mask.
             if use_input:
                 ext = _load_ppv_ext("input")
                 if ext is not None:
-                    lm = (lm & ext) if combinator == "AND" else (lm | ext)
+                    ext_line = ext
+                    if use_hfs_lines and hfs_data is not None:
+                        ext_hfs = build_hfs_mask_ppv(ext.astype(float), line, hfs_data, delta_v_kms)
+                        if ext_hfs is not None:
+                            ext_line = ext_hfs.astype(int)
+                            LOG.info(f"External input mask shifted to HFS frequencies for {line}.")
+                    lm = (lm & ext_line) if combinator == "AND" else (lm | ext_line)
                     LOG.info(f"PPV mask for {line} {combinator} input mask.")
             if use_window:
                 ext = _load_ppv_ext("window")
                 if ext is not None:
-                    lm = (lm & ext) if combinator == "AND" else (lm | ext)
+                    ext_line = ext
+                    if use_hfs_lines and hfs_data is not None:
+                        ext_hfs = build_hfs_mask_ppv(ext.astype(float), line, hfs_data, delta_v_kms)
+                        if ext_hfs is not None:
+                            ext_line = ext_hfs.astype(int)
+                            LOG.info(f"External window mask shifted to HFS frequencies for {line}.")
+                    lm = (lm & ext_line) if combinator == "AND" else (lm | ext_line)
                     LOG.info(f"PPV mask for {line} {combinator} window mask.")
 
             ppv_line_masks[ln_upper] = lm
