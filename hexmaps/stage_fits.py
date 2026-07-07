@@ -965,39 +965,13 @@ def run_moments_ppv(
         if use_input:
             ext = _load_ppv_ext("input")
             if ext is not None:
-                if use_hfs_lines and hfs_data is not None:
-                    lines_hfs_names = list(set(hfs_data["hfs_name"]))
-                    ext_extended = ext.astype(int).copy()
-                    for line in line_names:
-                        if line in lines_hfs_names:
-                            ext_hfs = build_hfs_mask_ppv(
-                                ext.astype(float), line, hfs_data, delta_v_kms
-                            )
-                            if ext_hfs is not None:
-                                ext_extended = ext_extended | ext_hfs.astype(int)
-                                LOG.info(f"External input mask extended to HFS frequencies for {line}.")
-                    mask_parts.append(ext_extended)
-                else:
-                    mask_parts.append(ext)
+                mask_parts.append(ext)
                 LOG.info("Input mask included in PPV mask.")
 
         if use_window:
             ext = _load_ppv_ext("window")
             if ext is not None:
-                if use_hfs_lines and hfs_data is not None:
-                    lines_hfs_names = list(set(hfs_data["hfs_name"]))
-                    ext_extended = ext.astype(int).copy()
-                    for line in line_names:
-                        if line in lines_hfs_names:
-                            ext_hfs = build_hfs_mask_ppv(
-                                ext.astype(float), line, hfs_data, delta_v_kms
-                            )
-                            if ext_hfs is not None:
-                                ext_extended = ext_extended | ext_hfs.astype(int)
-                                LOG.info(f"External window mask extended to HFS frequencies for {line}.")
-                    mask_parts.append(ext_extended)
-                else:
-                    mask_parts.append(ext)
+                mask_parts.append(ext)
                 LOG.info("Velocity-window mask included in PPV mask.")
 
         if not mask_parts:
@@ -1013,6 +987,24 @@ def run_moments_ppv(
         if strict_mask:
             LOG.info("Applying strict spatial mask filter (PPV).")
             mask = apply_strict_mask_ppv(mask.astype(int))
+
+        # HFS mask extension — mirrors stage_products combined mode.
+        # For each HFS-capable line, extend the master mask to its satellite
+        # frequencies and store the result in ppv_line_masks so the moment
+        # loop picks it up via active_mask.  Each line keeps its own
+        # independent integration window; no line is contaminated by the
+        # satellite channels of any other line.
+        if use_hfs_lines and hfs_data is not None:
+            lines_hfs = list(set(hfs_data["hfs_name"]))
+            for line in line_names:
+                if line not in lines_hfs:
+                    continue
+                LOG.info(f"Building HFS PPV mask for {line}.")
+                mask_hfs = build_hfs_mask_ppv(
+                    mask.astype(float), line, hfs_data, delta_v_kms
+                )
+                if mask_hfs is not None:
+                    ppv_line_masks[line.upper()] = mask_hfs.astype(int)
 
     # ------------------------------------------------------------------
     # Edge trimming + NaN masking
@@ -1056,26 +1048,25 @@ def run_moments_ppv(
         if ln_upper not in cube_data:
             continue
 
-        # Select the mask for this line
+        # Select the mask for this line.
+        # use_individual              → per-line S/N mask from ppv_line_masks
+        # use_hfs_lines + HFS entry  → HFS-extended master mask from ppv_line_masks
+        # otherwise                  → master mask for all lines
         if use_individual:
             active_mask = ppv_line_masks.get(ln_upper, mask)
-        elif use_hfs_lines and hfs_data is not None:
-            mask_hfs = build_hfs_mask_ppv(mask, line_name, hfs_data, delta_v_kms)
-            if mask_hfs is not None:
-                active_mask = mask_hfs
-                LOG.info(f"Using HFS-extended PPV mask for {line_name}.")
-                if save_mask and not np.array_equal(mask_hfs, mask):
-                    hfs_mask_name = f"mask_{line_name.lower()}"
-                    save_ppv_mask_to_fits(
-                        mask_hfs, ov_hdr, target, hfs_mask_name,
-                        folder, out_nan_mask=out_nan_mask,
-                    )
-                    LOG.info(
-                        f"PPV mask cube for {line_name} written to: "
-                        f"{os.path.join(folder, f'{target}_{hfs_mask_name}.fits')}"
-                    )
-            else:
-                active_mask = mask
+        elif use_hfs_lines and hfs_data is not None and ln_upper in ppv_line_masks:
+            active_mask = ppv_line_masks[ln_upper]
+            LOG.info(f"Using HFS-extended PPV mask for {line_name}.")
+            if save_mask and not np.array_equal(active_mask, mask):
+                hfs_mask_name = f"mask_{line_name.lower()}"
+                save_ppv_mask_to_fits(
+                    active_mask, ov_hdr, target, hfs_mask_name,
+                    folder, out_nan_mask=out_nan_mask,
+                )
+                LOG.info(
+                    f"PPV mask cube for {line_name} written to: "
+                    f"{os.path.join(folder, f'{target}_{hfs_mask_name}.fits')}"
+                )
         else:
             active_mask = mask
 
