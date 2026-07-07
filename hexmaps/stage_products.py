@@ -55,7 +55,7 @@ from astropy import units as u
 from astropy.stats import median_absolute_deviation
 from astropy.table import Table, Column
 
-from hexmaps.utils_table import shuffle, get_mom_maps, build_noise_mask, resolve_mask_lines, parse_ref_line
+from hexmaps.utils_table import shuffle, get_mom_maps, build_noise_mask, parse_ref_line
 
 from hexmaps.logger import get_logger
 
@@ -342,13 +342,11 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data, noise_mask_df
     # ------------------------------------------------------------------
     # Unpack settings from meta
     # ------------------------------------------------------------------
-    use_input_mask = meta.get("use_input_mask", False)
-    use_fixed_window = meta.get("use_fixed_window", False)
-    use_hfs_lines = meta.get("use_hfs_lines", False)
-    strict_mask = meta.get("strict_mask", False)
-    ref_line_method = meta.get("ref_line", "first")
-    SN_processing = meta.get("SN_processing", [2, 4])
-    velocity_window=meta.get("velocity_window", None)
+    ref_line_method  = meta.get("ref_line", "first")
+    SN_processing    = meta.get("SN_processing", [2, 4])
+    strict_mask      = meta.get("strict_mask", False)
+    use_hfs_lines    = meta.get("use_hfs_lines", False)
+    velocity_window  = meta.get("velocity_window", None)
     mom_calc = [
         meta.get("mom_thresh", 5),
         meta.get("conseq_channels", 3),
@@ -356,156 +354,160 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data, noise_mask_df
     ]
     shuff_axis = [meta.get("NAXIS_shuff", 200), meta.get("CDELT_SHUFF", 4000.0)]
 
-    this_data = Table.read(fname)
+    this_data  = Table.read(fname)
     line_names = [str(l) for l in cubes["line_name"]]
-    n_lines = len(line_names)
+    n_lines    = len(line_names)
 
-    # Determine the reference line (default: first cube in the list)
+    # ref_line: the first line in the list (used for vmean / shuffling fallback)
     ref_line = (
         ref_line_method
-        if ref_line_method in line_names
+        if isinstance(ref_line_method, str)
+        and ref_line_method in line_names
         else line_names[0]
     )
 
     n_chan = np.shape(this_data[f"SPEC_{ref_line.upper()}"])[1]
-
+    #   mask_lines  — cube lines for S/N masking (None=individual, []=none)
+    #   use_input   — whether to include the external input mask
+    #   use_window  — whether to include the fixed velocity-window mask
+    #   combinator  — "AND" or "OR" (default "OR")
+    #
+    # All requested masks are collected and combined with the combinator.
     # ------------------------------------------------------------------
-    # Mask construction
-    # ------------------------------------------------------------------
-    # parse_ref_line resolves:
-    #   mask_lines   — which cube lines to OR-combine for the primary mask
-    #                  (None signals individual mode)
-    #   combinations — list of (op, src) pairs from combination tokens:
-    #                  AND(input), OR(input), AND(window), OR(window)
-    # ------------------------------------------------------------------
-    mask_lines, combinations = parse_ref_line(ref_line_method, line_names)
+    mask_lines, use_input, use_window, combinator = parse_ref_line(
+        ref_line_method, line_names
+    )
 
-    if mask_lines is None:
-        # individual mode: build one mask per line
-        LOG.info(f"Building individual masks for {', '.join(line_names)}.")
-        line_masks, line_vmeans = construct_individual_mask(
-            line_names, this_data, SN_processing, use_hfs_lines, hfs_data, velocity_window
-        )
-
-    else:
-        # Build the combined S/N mask by looping over the resolved lines
-        LOG.info(f"Building velocity mask from: {', '.join(mask_lines)}.")
-        mask = None
-        ref_line_vmean = None
-        for line in mask_lines:
-            mask_line, vmean_line, _ = construct_mask(line, this_data, SN_processing)
-            this_data[f"SPEC_MASK_{line.upper()}"] = Column(
-                mask_line,
-                unit=u.dimensionless_unscaled,
-                description=f"Velocity-integration mask for {line}",
-            )
-            if mask is None:
-                mask = mask_line
-                ref_line_vmean = vmean_line
-                LOG.info(f"Building mask for line: {line}.")
-            else:
-                mask = (
-                    mask.value.astype(int) | mask_line.value.astype(int)
-                ) * u.dimensionless_unscaled
-                LOG.info(f"Adding line to mask: {line}.")
-
-        # Optional strict spatial connectivity filter
-        if strict_mask:
-            LOG.info(f"Applying strict spatial mask filter.")
-            mask_arr = _apply_strict_mask(mask.value.astype(int), this_data)
-            mask = mask_arr * u.dimensionless_unscaled
-
-        # Store the primary mask before any external combination
-        this_data["SPEC_MASK"] = Column(
-            mask,
-            unit=u.dimensionless_unscaled,
-            description="Velocity-integration mask (used for all integrated products)",
-        )
-
-    # ------------------------------------------------------------------
-    # Apply combination tokens AND(input), OR(input), AND(window), OR(window).
-    # ------------------------------------------------------------------
-    def _get_ext_mask(src):
-        """Fetch the external mask array for 'input' or 'window' source."""
-        if len(input_mask) == 0:
-            LOG.error(f"Combination token requires a mask but none is defined in config.")
-            return None
-        tag = f'SPEC_{str(input_mask["mask_name"].iloc[0]).upper()}'
+    # Helper: fetch the external mask array from the table column
+    def _get_ext_col(tag):
         if tag not in this_data.colnames:
-            LOG.warning(f"External mask column {tag} not found in table; skipping.")
+            LOG.warning(f"External mask column {tag} not found; skipping.")
             return None
         ext = this_data[tag]
         del this_data[tag]
         return np.asarray(ext.value if hasattr(ext, "value") else ext).astype(int)
 
-    handled_srcs = set()
-    for op, src in combinations:
-        if src == "input" and not use_input_mask:
-            LOG.warning(f"{op}(input) in ref_line but use_input_mask = false — skipping.")
-            continue
-        if src == "window" and not use_fixed_window:
-            LOG.warning(f"{op}(window) in ref_line but use_fixed_window = false — skipping.")
-            continue
-        ext_arr = _get_ext_mask(src)
-        if ext_arr is None:
-            continue
-        handled_srcs.add(src)
-        LOG.info(f"Combining primary mask {op} {src} mask.")
-        if mask_lines is None:
-            for ln in line_masks:
-                lm = np.asarray(
-                    line_masks[ln].value if hasattr(line_masks[ln], "value") else line_masks[ln]
-                ).astype(int)
-                line_masks[ln] = (
-                    (lm & ext_arr) if op == "AND" else (lm | ext_arr)
-                ) * u.dimensionless_unscaled
-        else:
-            cur = np.asarray(mask.value if hasattr(mask, "value") else mask).astype(int)
-            mask = (
-                (cur & ext_arr) if op == "AND" else (cur | ext_arr)
-            ) * u.dimensionless_unscaled
-            this_data["SPEC_MASK"] = Column(
-                mask, unit=u.dimensionless_unscaled,
-                description=f"Velocity-integration mask ({op} {src} mask)",
+    # ---- individual mode ------------------------------------------------
+    if mask_lines is None:
+        LOG.info(f"Building individual masks for {', '.join(line_names)}.")
+        line_masks, line_vmeans = construct_individual_mask(
+            line_names, this_data, SN_processing,
+            use_hfs_lines, hfs_data, velocity_window,
+        )
+        # Apply external masks per-line if requested
+        if use_input or use_window:
+            ext_tag = (
+                f'SPEC_{str(input_mask["mask_name"].iloc[0]).upper()}'
+                if len(input_mask) > 0 else None
             )
+            if use_input and ext_tag:
+                ext_arr = _get_ext_col(ext_tag)
+                if ext_arr is not None:
+                    for ln in line_masks:
+                        lm = np.asarray(
+                            line_masks[ln].value
+                            if hasattr(line_masks[ln], "value") else line_masks[ln]
+                        ).astype(int)
+                        line_masks[ln] = (
+                            (lm & ext_arr) if combinator == "AND" else (lm | ext_arr)
+                        ) * u.dimensionless_unscaled
+                    LOG.info(f"Individual masks {combinator} input mask.")
+            if use_window and ext_tag:
+                ext_arr = _get_ext_col(ext_tag)
+                if ext_arr is not None:
+                    for ln in line_masks:
+                        lm = np.asarray(
+                            line_masks[ln].value
+                            if hasattr(line_masks[ln], "value") else line_masks[ln]
+                        ).astype(int)
+                        line_masks[ln] = (
+                            (lm & ext_arr) if combinator == "AND" else (lm | ext_arr)
+                        ) * u.dimensionless_unscaled
+                    LOG.info(f"Individual masks {combinator} velocity-window mask.")
 
-    # Legacy flags: apply AND if the corresponding src was not already
-    # handled by an explicit combination token.
-    if use_input_mask and "input" not in handled_srcs:
-        ext_arr = _get_ext_mask("input")
-        if ext_arr is not None:
-            if mask_lines is None:
-                for ln in line_masks:
-                    lm = np.asarray(
-                        line_masks[ln].value if hasattr(line_masks[ln], "value") else line_masks[ln]
-                    ).astype(int)
-                    line_masks[ln] = (lm & ext_arr) * u.dimensionless_unscaled
-            else:
-                cur = np.asarray(mask.value if hasattr(mask, "value") else mask).astype(int)
-                mask = (cur & ext_arr) * u.dimensionless_unscaled
-                this_data["SPEC_MASK"] = Column(
-                    mask, unit=u.dimensionless_unscaled,
-                    description="Velocity-integration mask (AND input mask)",
-                )
-            LOG.info("Input mask AND-combined (legacy use_input_mask flag).")
+    # ---- combined mask mode ---------------------------------------------
+    else:
+        # Collect all requested mask arrays
+        mask_parts = []
 
-    if use_fixed_window and "window" not in handled_srcs:
-        ext_arr = _get_ext_mask("window")
-        if ext_arr is not None:
-            if mask_lines is None:
-                for ln in line_masks:
-                    lm = np.asarray(
-                        line_masks[ln].value if hasattr(line_masks[ln], "value") else line_masks[ln]
-                    ).astype(int)
-                    line_masks[ln] = (lm & ext_arr) * u.dimensionless_unscaled
-            else:
-                cur = np.asarray(mask.value if hasattr(mask, "value") else mask).astype(int)
-                mask = (cur & ext_arr) * u.dimensionless_unscaled
-                this_data["SPEC_MASK"] = Column(
-                    mask, unit=u.dimensionless_unscaled,
-                    description="Velocity-integration mask (AND window velocity mask)",
+        # S/N masks from cube lines
+        ref_line_vmean = None
+        if mask_lines:
+            LOG.info(f"Building velocity mask from: {', '.join(mask_lines)}.")
+            for line in mask_lines:
+                mask_line, vmean_line, _ = construct_mask(
+                    line, this_data, SN_processing
                 )
-            LOG.info("Fixed velocity mask AND-combined (legacy use_fixed_window flag).")
+                this_data[f"SPEC_MASK_{line.upper()}"] = Column(
+                    mask_line,
+                    unit=u.dimensionless_unscaled,
+                    description=f"Velocity-integration mask for {line}",
+                )
+                if ref_line_vmean is None:
+                    ref_line_vmean = vmean_line
+                mask_parts.append(
+                    np.asarray(
+                        mask_line.value
+                        if hasattr(mask_line, "value") else mask_line
+                    ).astype(int)
+                )
+
+        # External input mask
+        if use_input:
+            if len(input_mask) == 0:
+                LOG.error("ref_line contains 'input' but no mask is defined in config.")
+            else:
+                ext_tag = f'SPEC_{str(input_mask["mask_name"].iloc[0]).upper()}'
+                ext_arr = _get_ext_col(ext_tag)
+                if ext_arr is not None:
+                    mask_parts.append(ext_arr)
+                    LOG.info("Input mask included.")
+
+        # Fixed velocity-window mask
+        if use_window:
+            if len(input_mask) == 0:
+                LOG.error("ref_line contains 'window' but no mask is defined in config.")
+            else:
+                ext_tag = f'SPEC_{str(input_mask["mask_name"].iloc[0]).upper()}'
+                ext_arr = _get_ext_col(ext_tag)
+                if ext_arr is not None:
+                    mask_parts.append(ext_arr)
+                    LOG.info("Velocity-window mask included.")
+                    # Use ref_line vmean for shuffling when only window provided
+                    if ref_line_vmean is None:
+                        _, ref_line_vmean, _ = construct_mask(
+                            line_names[0], this_data, SN_processing
+                        )
+
+        # Combine all parts with the combinator
+        if not mask_parts:
+            LOG.warning("No mask parts resolved; using empty mask.")
+            n_pts, n_chan = np.shape(this_data[f"SPEC_{ref_line.upper()}"])
+            mask = np.zeros((n_pts, n_chan), dtype=int) * u.dimensionless_unscaled
+        else:
+            combined = mask_parts[0].copy()
+            for part in mask_parts[1:]:
+                combined = (combined & part) if combinator == "AND" else (combined | part)
+            mask = combined * u.dimensionless_unscaled
+            if len(mask_parts) > 1:
+                LOG.info(
+                    f"Combined {len(mask_parts)} mask(s) with {combinator}."
+                )
+
+        # Optional strict spatial connectivity filter
+        if strict_mask:
+            LOG.info("Applying strict spatial mask filter.")
+            mask = _apply_strict_mask(
+                np.asarray(mask.value if hasattr(mask, "value") else mask).astype(int),
+                this_data,
+            ) * u.dimensionless_unscaled
+
+        # Store the combined mask
+        this_data["SPEC_MASK"] = Column(
+            mask,
+            unit=u.dimensionless_unscaled,
+            description="Velocity-integration mask",
+        )
     # HFS mask extension
     lines_hfs = (
         list(set(hfs_data["hfs_name"]))
