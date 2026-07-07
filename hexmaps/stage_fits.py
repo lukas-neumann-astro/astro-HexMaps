@@ -770,6 +770,7 @@ def run_moments_ppv(
     folder,
     save_mask=False,
     noise_mask_df=None,
+    window_mask=None,
 ):
     """
     Compute and write PPV-native moment maps for every cube of *target*.
@@ -849,23 +850,26 @@ def run_moments_ppv(
     #   use_window  — include the fixed velocity-window mask
     #   combinator  — "AND" or "OR" (default "OR")
     # ------------------------------------------------------------------
-    mask_lines, use_input, use_window, combinator = parse_ref_line(
+    mask_lines, use_individual, use_input, use_window, combinator = parse_ref_line(
         ref_line_method, line_names
     )
 
     # Helper: load an external PPV mask
     def _load_ppv_ext(kind):
-        if len(input_mask) == 0:
-            LOG.error(f"ref_line contains '{kind}' but no mask is defined in config.")
-            return None
         if kind == "window":
-            mu   = input_mask["mask_unit"].iloc[0]
-            mst  = float(input_mask["mask_start"].iloc[0]) * au.Unit(mu)
-            mend = float(input_mask["mask_end"].iloc[0])   * au.Unit(mu)
+            if window_mask is None or len(window_mask) == 0:
+                LOG.error("ref_line contains 'window' but no window_mask is defined.")
+                return None
+            mu   = window_mask["mask_unit"].iloc[0]
+            mst  = float(window_mask["mask_start"].iloc[0]) * au.Unit(mu)
+            mend = float(window_mask["mask_end"].iloc[0])   * au.Unit(mu)
             return fixed_velocity_mask_ppv(
                 cube_data[ref_line].shape, ov_hdr, mst, mend, mu
             ).astype(int)
-        else:  # input
+        else:  # "input"
+            if input_mask is None or len(input_mask) == 0:
+                LOG.error("ref_line contains 'input' but no input_mask is defined.")
+                return None
             mfile = os.path.join(
                 str(input_mask["mask_dir"].iloc[0]),
                 target + str(input_mask["mask_ext"].iloc[0]),
@@ -878,7 +882,7 @@ def run_moments_ppv(
     ppv_line_masks = {}
 
     # ---- individual mode ------------------------------------------------
-    if mask_lines is None:
+    if use_individual:
         LOG.info(f"Building individual PPV masks for {', '.join(line_names)}.")
         for line in line_names:
             if line not in cube_data:
@@ -975,7 +979,7 @@ def run_moments_ppv(
         LOG.info(
             f"PPV mask cube written to: {os.path.join(folder, f'{target}_mask.fits')}"
         )
-        if ref_line_method == "individual":
+        if use_individual:
             for line, lm in ppv_line_masks.items():
                 lm_edge = (np.asarray(lm) * edge_mask[None, :, :]).astype(int)
                 save_ppv_mask_to_fits(
@@ -996,7 +1000,7 @@ def run_moments_ppv(
             continue
 
         active_mask = mask
-        if ref_line_method == "individual":
+        if use_individual:
             # Use this line's own mask, falling back to the union mask if absent.
             active_mask = ppv_line_masks.get(line_name, mask)
         elif use_hfs_lines and hfs_data is not None:
@@ -1095,6 +1099,7 @@ def run_fits(
     cubes,
     params,
     input_mask=None,
+    window_mask=None,
     hfs_data=None,
     noise_mask_df=None,
 ):
@@ -1188,6 +1193,7 @@ def run_fits(
             folder,
             save_mask=save_mask,
             noise_mask_df=noise_mask_df,
+            window_mask=window_mask,
         )
         LOG.info(f"Moment map FITS files written to: {folder}")
     elif save_mask:

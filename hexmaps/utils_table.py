@@ -508,112 +508,89 @@ def parse_ref_line(ref_line_method, line_names):
     """
     Parse the ``ref_line`` config value into a structured specification.
 
-    The value is a **comma-separated list** of tokens belonging to three
-    strictly defined categories:
+    The value is a comma-separated list of tokens in three categories:
 
-    **Combinator token** — exactly one, optional (default ``OR``):
+    **Combinator token** (optional, default ``OR``):
+        ``AND`` — all masks must be True.
+        ``OR``  — any mask being True is sufficient (default).
 
-    ``AND``
-        All selected masks must be True for a pixel to be included.
-    ``OR``
-        Any selected mask being True is sufficient (default).
+    **External-mask tokens** (zero or more):
+        ``input``  — include the external FITS input mask.
+        ``window`` — include the fixed velocity-window mask.
 
-    **External-mask tokens** — zero or more:
-
-    ``input``
-        Include the external FITS input mask (a file-mask row in the
-        ``# ---- mask ----`` table).
-    ``window``
-        Include the fixed velocity-window mask (a ``vel_mask`` row in
-        the ``# ---- mask ----`` table).
-
-    **Line-selection tokens** — exactly one, mandatory unless ``input``
-    and/or ``window`` are given without any line token:
-
-    ``first``
-        S/N mask from the first line in the cube list.
-    ``all``
-        S/N mask from the OR-union of all lines in the cube list.
-    ``<n>`` (positive integer)
-        S/N mask from the first *n* lines in the cube list.
-    ``individual``
-        Build and apply one independent S/N mask per line.
-    ``<LINE_NAME>`` (one or more comma-separated line names)
-        S/N mask from the specified named line(s), matched
-        case-insensitively against the cube list.  If a name is not
-        found in the cube list a ``ValueError`` is raised.
-
-    If no line-selection token is provided alongside ``input`` / ``window``
-    the function returns an empty ``mask_lines`` list (no S/N mask).
-    If no token of any recognised kind is found a ``ValueError`` is raised.
+    **Line-selection token** (exactly one, mandatory unless only
+    ``input``/``window`` are given):
+        ``first``        — S/N mask from the first line in the cube list.
+        ``all``          — S/N mask from all lines in the cube list.
+        ``<n>``          — S/N mask from the first *n* lines (integer ≥ 1).
+        ``individual``   — one independent S/N mask per line, each applied
+                           only to that line's moments.  External masks are
+                           still combined with each per-line mask.
+        ``<LINE_NAME>``  — one or more named lines from the cube list,
+                           matched case-insensitively.
 
     Parameters
     ----------
     ref_line_method : str or int
-        Raw value of the ``ref_line`` config key.
-    line_names : list of str
-        All cube line names in the order they appear in the config.
+    line_names : list of str  — cube line names from the config.
 
     Returns
     -------
-    mask_lines : list of str (uppercase) or None
-        Lines to combine for the primary S/N mask.
-        ``None`` means *individual* mode.
-        ``[]`` means no S/N mask requested (only external masks).
+    mask_lines     : list of str
+        Line names to build S/N masks from (original case).
+        Empty list means no S/N mask requested (only external masks).
+        For ``individual`` mode this is the full cube list;
+        ``use_individual`` tells the caller how to apply them.
+    use_individual : bool
+        True  → build one S/N mask per line, apply it only to that line.
+        False → combine all masks into a single master mask for every line.
     use_input  : bool — include the external input mask.
     use_window : bool — include the fixed velocity-window mask.
     combinator : str  — ``"AND"`` or ``"OR"``.
 
     Raises
     ------
-    ValueError
-        If ``line_names`` is empty, if an unknown token is encountered, or
-        if a named line is not found in ``line_names``.
+    ValueError — empty input, unknown token, conflicting selection modes,
+                 or a named line not found in the cube list.
 
     Examples
     --------
-    ``ref_line = first``                 → mask from first line (OR combinator)
-    ``ref_line = 12co21``                → mask from 12co21
-    ``ref_line = 12co21, 12co10``        → OR of 12co21 and 12co10 masks
-    ``ref_line = all``                   → OR of all line masks
-    ``ref_line = 2``                     → OR of first 2 line masks
-    ``ref_line = individual``            → one mask per line, applied per-line
-    ``ref_line = first, input``          → OR of first-line S/N mask + input mask
-    ``ref_line = 12co21, input, AND``    → 12co21 S/N mask AND input mask
-    ``ref_line = first, window, AND``    → first-line S/N mask AND velocity window
-    ``ref_line = input, window``         → OR of input mask + velocity window
-    ``ref_line = input``                 → only input mask (no S/N mask)
+    ``first``                 master mask from the first line
+    ``12co21``                master mask from 12co21
+    ``12co21, 12co10``        master mask: OR of both S/N masks
+    ``all``                   master mask: OR of all S/N masks
+    ``2``                     master mask: OR of first-2 S/N masks
+    ``individual``            per-line masks, applied per-line
+    ``individual, input, AND``  per-line mask AND input mask
+    ``first, input``          master mask: OR of first-line S/N + input
+    ``12co21, input, AND``    master mask: 12co21 S/N AND input
+    ``first, window, AND``    master mask: first-line S/N AND window
+    ``input``                 only input mask (no S/N mask)
     """
     if not line_names:
         raise ValueError("parse_ref_line: line_names is empty.")
 
-    # ----------------------------------------------------------------
-    # Step 1: tokenise
-    # ----------------------------------------------------------------
+    # --- tokenise -------------------------------------------------------
     raw_tokens = [t.strip() for t in str(ref_line_method).split(",") if t.strip()]
     if not raw_tokens:
         raise ValueError(
-            f"parse_ref_line: ref_line is empty. "
-            f"Provide at least one token (e.g. 'first', a line name, "
-            f"'input', or 'window')."
+            "parse_ref_line: ref_line is empty. "
+            "Provide at least one token (e.g. 'first', a line name, "
+            "'input', or 'window')."
         )
 
-    # ----------------------------------------------------------------
-    # Step 2: classify each token
-    # ----------------------------------------------------------------
-    # Known special tokens (case-insensitive)
-    _COMBINATOR_TOKENS = {"AND", "OR"}
-    _EXTERNAL_TOKENS   = {"input", "window"}
-    _KEYWORD_TOKENS    = {"first", "all", "individual"}
+    # --- classify -------------------------------------------------------
+    upper_to_orig = {ln.upper(): ln for ln in line_names}
 
-    combinator = "OR"
-    use_input  = False
-    use_window = False
-    line_tokens = []          # tokens that are line names or keywords / int
+    combinator     = "OR"
+    use_input      = False
+    use_window     = False
+    use_individual = False
+    line_tokens    = []   # resolved line-names or keyword strings
 
     for raw in raw_tokens:
 
-        if raw in _COMBINATOR_TOKENS:
+        if raw in ("AND", "OR"):
             combinator = raw
             continue
 
@@ -625,7 +602,12 @@ def parse_ref_line(ref_line_method, line_names):
             use_window = True
             continue
 
-        if raw in _KEYWORD_TOKENS:
+        if raw == "individual":
+            use_individual = True
+            line_tokens.append("individual")
+            continue
+
+        if raw in ("first", "all"):
             line_tokens.append(raw)
             continue
 
@@ -634,33 +616,28 @@ def parse_ref_line(ref_line_method, line_names):
             n = int(raw)
         except ValueError:
             n = None
-
         if n is not None:
             if n < 1:
                 raise ValueError(
-                    f"parse_ref_line: integer token must be ≥ 1, got '{raw}'."
+                    f"parse_ref_line: integer token must be \u2265 1, got '{raw}'."
                 )
-            line_tokens.append(raw)
+            line_tokens.append(raw)   # store as string for uniform handling
             continue
 
         # Named line from the cube list?
-        if raw in line_names:
-            line_tokens.append(raw)
+        if raw in upper_to_orig:
+            line_tokens.append(upper_to_orig[raw])   # preserve original case
             continue
 
-        # Nothing matched — hard error
+        # Nothing matched
         raise ValueError(
             f"parse_ref_line: unrecognised token '{raw}'. "
             f"Expected one of: AND, OR, input, window, first, all, individual, "
-            f"a positive integer, or a line name from the cube list {line_names}."
+            f"a positive integer, or a line name from {line_names}."
         )
 
-    # ----------------------------------------------------------------
-    # Step 3: resolve the line-selection tokens
-    # ----------------------------------------------------------------
-    # Validate: at most ONE line-selection mode is allowed.
-    # (multiple named lines are fine; mixing FIRST with a line name is not)
-    keyword_found = [t for t in line_tokens if t in _KEYWORD_TOKENS]
+    # --- resolve line-selection tokens → mask_lines ---------------------
+    keyword_found = [t for t in line_tokens if t in ("first", "all", "individual")]
     named_found   = [t for t in line_tokens if t in line_names]
     int_found     = []
     for t in line_tokens:
@@ -669,22 +646,22 @@ def parse_ref_line(ref_line_method, line_names):
         except ValueError:
             pass
 
-    # Check for conflicting selection modes
     n_modes = (
-        (1 if "individual" in keyword_found else 0)
-        + (1 if "all" in keyword_found else 0)
+        (1 if use_individual else 0)
+        + (1 if "all"   in keyword_found else 0)
         + (1 if "first" in keyword_found else 0)
         + (1 if int_found else 0)
         + (1 if named_found else 0)
     )
     if n_modes > 1:
         raise ValueError(
-            f"parse_ref_line: conflicting line-selection tokens in '{ref_line_method}'. "
-            f"Provide exactly one of: first, all, individual, an integer, or line name(s)."
+            f"parse_ref_line: conflicting line-selection tokens in "
+            f"'{ref_line_method}'. Provide exactly one of: first, all, "
+            f"individual, an integer, or line name(s)."
         )
 
     if not line_tokens:
-        # Only external tokens provided — no S/N mask
+        # Only external-mask tokens — no S/N mask
         if not use_input and not use_window:
             raise ValueError(
                 f"parse_ref_line: no valid token found in '{ref_line_method}'. "
@@ -693,28 +670,20 @@ def parse_ref_line(ref_line_method, line_names):
             )
         mask_lines = []
 
-    elif "individual" in line_tokens:
-        mask_lines = None
+    elif use_individual:
+        mask_lines = list(line_names)   # all lines get their own mask
 
-    elif "all" in line_tokens:
-        mask_lines = line_names
+    elif "all" in keyword_found:
+        mask_lines = list(line_names)
 
-    elif "first" in line_tokens:
+    elif "first" in keyword_found:
         mask_lines = [line_names[0]]
 
     elif int_found:
-        n = int_found[0]
-        n = max(1, min(n, len(line_names)))
-        mask_lines = line_names[:n]
+        n = max(1, min(int_found[0], len(line_names)))
+        mask_lines = list(line_names[:n])
 
     else:
-        # Named lines
-        mask_lines = named_found   # already validated above
+        mask_lines = named_found   # original case preserved
 
-    print(f"parse_ref_line: mask_lines={mask_lines}, \
-          use_input={use_input}, \
-          use_window={use_window}, \
-          combinator={combinator}"
-          )
-
-    return mask_lines, use_input, use_window, combinator
+    return mask_lines, use_individual, use_input, use_window, combinator

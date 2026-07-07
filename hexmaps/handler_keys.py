@@ -131,6 +131,7 @@ class KeyHandler:
         self.maps = None
         self.cubes = None
         self.input_mask = None
+        self.window_mask = None
         self.noise_mask = None
         self.hfs_data = None
 
@@ -173,6 +174,9 @@ class KeyHandler:
     def get_input_mask(self) -> pd.DataFrame:
         """Return the DataFrame of mask definitions (may be empty)."""
         return self.input_mask
+
+    def get_window_mask(self) -> pd.DataFrame:
+        return self.window_mask
 
     def get_noise_mask(self) -> pd.DataFrame:
         """Return the DataFrame of noise velocity windows (may be empty)."""
@@ -592,7 +596,8 @@ class KeyHandler:
         # ------------------------------------------------------------------
         # Pass 2: parse the tabular sections line by line
         # ------------------------------------------------------------------
-        map_rows, cube_rows, mask_rows, noise_mask_rows = [], [], [], []
+        map_rows, cube_rows = [], []
+        input_mask_rows, window_mask_rows, noise_mask_rows = [], [], []
         section = None
 
         with open(self.conf_path, "r") as f:
@@ -613,9 +618,30 @@ class KeyHandler:
                     section = "mask"
                     continue
 
-                # Skip all other comments and ini-style [section]/key=value lines
+                # Skip all other comments and ini-style [section] headers
                 if line.startswith("#") or line.startswith("["):
                     continue
+
+                # ----------------------------------------------------------
+                # Mask section: lines have the form
+                #   input_mask  = name, desc, ext, dir
+                #   window_mask = name, desc, start, end, unit
+                #   noise_mask  = name, desc, start, end, unit
+                # Each key may appear multiple times (e.g. several noise rows).
+                # ----------------------------------------------------------
+                if section == "mask" and "=" in line:
+                    key, _, rest = line.partition("=")
+                    key  = key.strip().lower()
+                    parts = [p.strip() for p in rest.split(",")]
+                    if key == "input_mask" and len(parts) >= 4:
+                        input_mask_rows.append(parts)
+                    elif key == "window_mask" and len(parts) >= 5:
+                        window_mask_rows.append(parts)
+                    elif key == "noise_mask" and len(parts) >= 5:
+                        noise_mask_rows.append(parts)
+                    continue
+
+                # Plain comma-separated rows outside the mask section
                 if "=" in line and "," not in line:
                     continue
 
@@ -631,21 +657,12 @@ class KeyHandler:
                         parts.append("")
                     cube_rows.append(parts[: len(CUBE_COLUMNS)])
 
-                elif section == "mask" and len(parts) >= 3:
-                    # Route by first field: "noise_mask" rows go to noise_mask_rows
-                    if parts[0].lower() == "noise_mask":
-                        noise_mask_rows.append(parts)
-                    else:
-                        mask_rows.append(parts)
-
         # Build DataFrames
-        self.maps = pd.DataFrame(map_rows, columns=MAP_COLUMNS)
+        self.maps  = pd.DataFrame(map_rows,  columns=MAP_COLUMNS)
         self.cubes = pd.DataFrame(cube_rows, columns=CUBE_COLUMNS)
 
         # ------------------------------------------------------------------
         # Resolve relative map_dir / line_dir to absolute paths.
-        # This is essential so that stage_regrid can construct valid file
-        # paths regardless of where the user runs the pipeline from.
         # ------------------------------------------------------------------
         _base = Path(self.meta.get("_base", "."))
         if len(self.maps) > 0:
@@ -657,20 +674,46 @@ class KeyHandler:
                 lambda d: str((_base / d.strip()).resolve()) if d.strip() else d
             )
 
-        # Build mask DataFrame — detect column layout from the row content:
-        # velocity-window rows have 5 fields, file-mask rows have 4.
-        cols = MASK_COLUMNS_FILE  # default
-        if mask_rows:
-            n_fields = max(len(r) for r in mask_rows)
-            cols = MASK_COLUMNS_VEL if n_fields >= 5 else MASK_COLUMNS_FILE
-            padded = [r + [""] * max(0, len(cols) - len(r)) for r in mask_rows]
+        # ------------------------------------------------------------------
+        # input_mask: file-based external FITS mask
+        #   columns: mask_name, mask_desc, mask_ext, mask_dir
+        # ------------------------------------------------------------------
+        if input_mask_rows:
+            padded = [
+                r + [""] * max(0, len(MASK_COLUMNS_FILE) - len(r))
+                for r in input_mask_rows
+            ]
             self.input_mask = pd.DataFrame(
-                [r[: len(cols)] for r in padded], columns=cols
+                [r[: len(MASK_COLUMNS_FILE)] for r in padded],
+                columns=MASK_COLUMNS_FILE,
+            )
+            # Resolve mask_dir to absolute path
+            self.input_mask["mask_dir"] = self.input_mask["mask_dir"].apply(
+                lambda d: str((_base / d.strip()).resolve()) if d.strip() else d
             )
         else:
-            self.input_mask = pd.DataFrame(columns=cols)
+            self.input_mask = pd.DataFrame(columns=MASK_COLUMNS_FILE)
 
-        # Build noise_mask DataFrame (always velocity-window format)
+        # ------------------------------------------------------------------
+        # window_mask: fixed velocity-window mask
+        #   columns: mask_name, mask_desc, mask_start, mask_end, mask_unit
+        # ------------------------------------------------------------------
+        if window_mask_rows:
+            padded = [
+                r + [""] * max(0, len(MASK_COLUMNS_VEL) - len(r))
+                for r in window_mask_rows
+            ]
+            self.window_mask = pd.DataFrame(
+                [r[: len(MASK_COLUMNS_VEL)] for r in padded],
+                columns=MASK_COLUMNS_VEL,
+            )
+        else:
+            self.window_mask = pd.DataFrame(columns=MASK_COLUMNS_VEL)
+
+        # ------------------------------------------------------------------
+        # noise_mask: noise velocity windows for RMS estimation
+        #   columns: mask_name, mask_desc, mask_start, mask_end, mask_unit
+        # ------------------------------------------------------------------
         if noise_mask_rows:
             padded = [
                 r + [""] * max(0, len(NOISE_MASK_COLUMNS) - len(r))
