@@ -378,9 +378,21 @@ def get_mom_maps(spec_cube, mask, vaxis, mom_calc=(3, 3, "fwhm"), noise_mask=Non
 
         # RMS noise: use explicit noise channels if provided, otherwise
         # use channels outside the integration mask.
+        # When an explicit noise_mask is given, first remove any channels
+        # where the integration mask is True — those contain signal and
+        # must not contaminate the noise estimate.  If the overlap is so
+        # large that no valid noise channels remain, fall back to the
+        # channels-outside-integration-mask approach and log a warning.
         if noise_mask is not None:
             noise_chans = np.asarray(noise_mask)[m].astype(bool)
-            rms_vals = spectrum[noise_chans & (spectrum != 0)]
+            # Remove channels that overlap with the integration mask
+            signal_chans = mask_m.astype(bool)
+            noise_chans_clean = noise_chans & ~signal_chans
+            if noise_chans_clean.any():
+                rms_vals = spectrum[noise_chans_clean & (spectrum != 0)]
+            else:
+                # Full overlap: fall back to all non-signal channels
+                rms_vals = spectrum[~signal_chans & (spectrum != 0)]
         else:
             rms_vals = spectrum[np.logical_and(mask_m == 0, spectrum != 0)]
         rms = np.nanstd(rms_vals)
