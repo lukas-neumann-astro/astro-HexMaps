@@ -94,16 +94,16 @@ spire250,  SPIRE 250 um,      MJy/sr,  _spire250_gauss21.fits,  data/
 
 # ---- mask ----
 # Example file mask (comment out if unused):
-# input_mask = co_mask, CO signal mask, _co_mask.fits, data/
+input_mask = co_mask, CO signal mask, _co_mask.fits, data/
 #
 # Example fixed-velocity mask (comment out if unused):
-# window_mask = window_mask, Fixed velocity window, 400, 600, km/s
+window_mask = window_mask, Fixed velocity window, 400, 600, km/s
 
 # Example noise velocity windows (comment out if unused):
 # Specify one or more line-free velocity ranges for noise (RMS) estimation.
 # Multiple windows are combined (OR) into a single noise channel mask.
-# noise_mask = noise_mask, Noise window (blue),   0,  400, km/s
-# noise_mask = noise_mask, Noise window (red),  600,  800, km/s
+noise_mask = noise_mask, Noise window (blue),   0,  400, km/s
+noise_mask = noise_mask, Noise window (red),  600,  800, km/s
 
 
 # -----------------------------------------------------------------------------
@@ -124,7 +124,7 @@ resolution = angular
 # Number of sampling points per beam diameter (default 2 = half-beam spacing)
 pixels_per_beam = 2
 
-# Maximum map radius in degrees. Set to 'auto' to derive from the overlay.
+# Maximum map radius in degrees.  Set to 'auto' to derive from the overlay.
 max_rad = auto
 
 # Spectral axis parameters for the shuffled spectra output
@@ -165,7 +165,14 @@ ref_line = first
 # Signal-to-noise thresholds for the two-step mask: [low, high]
 SN_processing = 2, 4
 
-# If true, apply a strict spatial consistency check on the mask
+# Spatial coherence filter applied after S/N masking:
+#   false   — no spatial filtering (default)
+#   strict  — remove connected components smaller than ~1 beam area per
+#             channel (analogous to ACES beam-area pruning). Highest
+#             confidence, but may discard faint real emission.
+#   broad   — re-derive the mask from a spatially smoothed cube using the
+#             same two-level S/N + dilation strategy as PHANGS-ALMA broad
+#             masking. More inclusive; good for faint extended emission.
 strict_mask = false
 
 # Use explicit velocity windows (noise_mask rows in the [mask] table) for

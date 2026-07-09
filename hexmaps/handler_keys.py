@@ -426,7 +426,7 @@ class KeyHandler:
             float(x) for x in _get("masking", "SN_processing", "2,4").split(",")
         ]
         self.meta["strict_mask"] = (
-            _get("masking", "strict_mask", "false").lower() == "true"
+            _get("masking", "strict_mask", "false").lower()
         )
         self.meta["use_fixed_noise_mask"] = (
             _get("masking", "use_fixed_noise_mask", "false").lower() == "true"

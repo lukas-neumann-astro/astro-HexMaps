@@ -156,70 +156,173 @@ def construct_mask(ref_line, this_data, SN_processing):
 
 
 # ============================================================================
-# Strict spatial mask filter
+# Mask coherence filters  (strict and broad modes)
 # ============================================================================
+
+
+def _coords_and_beam(this_data):
+    """Return (ra, dec, beam_deg) from table metadata and coordinate columns."""
+    _skip = {"incl_deg", "posang_deg"}
+    _coord_cols = [c for c in this_data.colnames
+                   if c.lower().endswith("_deg") and c not in _skip]
+    if len(_coord_cols) >= 2:
+        ra  = np.asarray(this_data[_coord_cols[0]])
+        dec = np.asarray(this_data[_coord_cols[1]])
+    else:
+        ra  = np.asarray(this_data["RA"])
+        dec = np.asarray(this_data["DEC"])
+    beam_deg = float(this_data.meta["beam_as"].to(au.deg).value)
+    return ra, dec, beam_deg
 
 
 def _apply_strict_mask(mask, this_data):
     """
-    Remove spatially isolated mask features using a connected-component filter.
+    Remove spatially isolated mask features (strict mask mode).
 
-    For each spectral channel, label spatially connected groups of masked pixels
-    (using the hex-grid neighbour distance).  Groups with fewer than 5 members
-    are removed.  This suppresses noise peaks that happen to exceed the S/N
-    threshold but lack spatial coherence.
+    For each spectral channel, label spatially connected groups of masked
+    sightlines using pairwise angular distances on the hex grid.  Groups
+    smaller than one beam area (estimated as pi*(beam/2)^2 on the hex grid,
+    which works out to ~5 sightlines at half-beam spacing) are removed.
+
+    This is the hex-grid analogue of ACES beam-area pruning: any detection
+    that does not have at least one beam's worth of spatially connected
+    sightlines in the same channel is discarded as a noise spike.
 
     Parameters
     ----------
-    mask      : np.ndarray (n_pts × n_chan) — 0/1 mask array
-    this_data : Table — used for spatial coordinate columns, and beam_as metadata
+    mask      : np.ndarray (n_pts × n_chan) int
+    this_data : Table
 
     Returns
     -------
-    mask : np.ndarray — filtered mask (same shape, in-place modification)
+    mask : np.ndarray — filtered mask (same shape)
     """
-    # Coordinate columns may be RA/DEC, GLON/GLAT, etc.
-    # Find the first two columns ending in "_deg" that are not inclination/PA.
-    _skip = {"incl_deg", "posang_deg"}
-    _coord_cols = [c for c in this_data.colnames
-                   if c.endswith("_deg") and c not in _skip]
-    if len(_coord_cols) >= 2:
-        ra, dec = this_data[_coord_cols[0]], this_data[_coord_cols[1]]
-    else:
-        ra, dec = this_data["RA"], this_data["DEC"]
-    n_chan = np.shape(mask)[1]
-    sep = this_data.meta["beam_as"] / 3600 / 2
+    ra, dec, beam_deg = _coords_and_beam(this_data)
+    n_chan = mask.shape[1]
+    # At half-beam hex spacing, one beam area ~ pi*(0.5)^2 / (sqrt(3)/4) ≈ 3.6
+    # sightlines; we round up to 5 to match the ACES ≥3-beam-area criterion.
+    half_sep  = beam_deg / 2.0
+    tolerance = 0.15 * beam_deg   # ±15% of beam to account for grid irregularity
+    min_group = max(5, 1)         # minimum sightlines = ~1 beam area
 
+    mask = mask.copy()
     for jj in range(n_chan):
-        mask_spec = mask[:, jj]
-        mask_labels = np.zeros_like(mask_spec)
-        label = 1
+        mask_spec  = mask[:, jj]
+        if not mask_spec.any():
+            continue
+        labels = np.zeros(len(mask_spec), dtype=int)
+        current_label = 1
 
-        for n in range(len(mask_labels)):
-            if mask_labels[n] != 0:
+        for n in range(len(labels)):
+            if labels[n] != 0 or mask_spec[n] == 0:
+                if mask_spec[n] == 0:
+                    labels[n] = -1
                 continue
-            if mask_spec[n] == 0:
-                mask_labels[n] = -99
-                continue
-            dist_array = np.sqrt((ra - ra[n]) ** 2 + (dec - dec[n]) ** 2)
-            idx_neigh = np.where(
-                abs(dist_array - sep) < 0.1 * this_data.meta["beam_as"].to(au.deg)
-            )
-            labels_given = np.unique(mask_labels[idx_neigh])
-            index = labels_given[labels_given > 0]
-            if len(index) > 0:
-                mask_labels[n] = index[0]
-                for i in range(len(index) - 1):
-                    mask_labels[mask_labels == index[i + 1]] = index[0]
+            dist = np.sqrt((ra - ra[n])**2 + (dec - dec[n])**2)
+            neigh = np.where(np.abs(dist - half_sep) < tolerance)[0]
+            neigh_labels = np.unique(labels[neigh])
+            pos_labels   = neigh_labels[neigh_labels > 0]
+            if len(pos_labels) > 0:
+                labels[n] = pos_labels[0]
+                for extra in pos_labels[1:]:
+                    labels[labels == extra] = pos_labels[0]
             else:
-                mask_labels[n] = label
-                label += 1
+                labels[n] = current_label
+                current_label += 1
 
-        for lab in np.unique(mask_labels):
+        for lab in np.unique(labels):
             if lab <= 0:
                 continue
-            if len(mask[:, jj][mask_labels == lab]) < 5:
-                mask[:, jj][mask_labels == lab] = 0
+            members = np.where(labels == lab)[0]
+            if len(members) < min_group:
+                mask[members, jj] = 0
+
+    return mask
+
+
+def _apply_broad_mask(spec_cube, SN_processing, this_data):
+    """
+    Build an inclusive (broad) mask using spatial smoothing + two-level S/N
+    dilation, following the PHANGS-ALMA broad-masking strategy.
+
+    Steps
+    -----
+    1. Smooth each channel spatially to a scale of ~2× the beam using a
+       Gaussian-weighted average of hex-grid neighbours.  This improves
+       sensitivity to faint, spatially coherent emission at the cost of
+       spatial resolution.
+    2. Estimate per-sightline noise (MAD) on the *smoothed* cube.
+    3. Identify a high-S/N core (≥ high_thresh, with consecutive-channel
+       support) in the smoothed cube.
+    4. Dilate the core into a low-S/N wing mask (≥ low_thresh) in the
+       smoothed cube — captures faint line wings attached to bright cores.
+    5. Return the dilated mask to be applied to the *original* (unsmoothed)
+       spectra when computing moments.
+
+    Parameters
+    ----------
+    spec_cube     : np.ndarray (n_pts × n_chan) — raw spectra
+    SN_processing : list[float] — [low_SN, high_SN] thresholds
+    this_data     : Table — for coordinate columns and beam metadata
+
+    Returns
+    -------
+    mask : np.ndarray (n_pts × n_chan) int — broad integration mask
+    """
+    ra, dec, beam_deg = _coords_and_beam(this_data)
+    n_pts, n_chan = spec_cube.shape
+
+    # ------------------------------------------------------------------
+    # Step 1: smooth spectra spatially to ~2× beam using Gaussian weights
+    # ------------------------------------------------------------------
+    smooth_sigma_deg = beam_deg  # target sigma = 1 beam FWHM ≈ 2.35 sigma
+    smoothed = np.full_like(spec_cube, np.nan)
+
+    for n in range(n_pts):
+        dist_sq = (ra - ra[n])**2 + (dec - dec[n])**2
+        weights  = np.exp(-0.5 * dist_sq / smooth_sigma_deg**2)
+        weights[np.all(np.isnan(spec_cube), axis=1)] = 0.0
+        w_sum = weights.sum()
+        if w_sum > 0:
+            smoothed[n, :] = np.nansum(
+                weights[:, None] * spec_cube, axis=0
+            ) / w_sum
+
+    # ------------------------------------------------------------------
+    # Step 2: per-sightline noise on the smoothed cube
+    # ------------------------------------------------------------------
+    rms = median_absolute_deviation(smoothed, axis=None, ignore_nan=True)
+    rms = median_absolute_deviation(
+        smoothed[smoothed < 3 * rms], ignore_nan=True
+    )
+    mask_rough  = smoothed < 3 * rms
+    masked_sm   = np.where(mask_rough, smoothed, np.nan)
+    med_sm      = np.nanmedian(masked_sm, axis=1)
+    mad_sm      = np.nanmedian(np.abs(masked_sm - med_sm[:, None]), axis=1)
+
+    low_thresh  = SN_processing[0] * mad_sm[:, None]
+    high_thresh = SN_processing[1] * mad_sm[:, None]
+
+    # ------------------------------------------------------------------
+    # Step 3: core mask on smoothed cube (consecutive-channel requirement)
+    # ------------------------------------------------------------------
+    core = (smoothed > high_thresh).astype(int)
+    core = ((core + np.roll(core, 1, 1) + np.roll(core, -1, 1)) >= 3).astype(int)
+
+    # ------------------------------------------------------------------
+    # Step 4: wing mask; dilate core into wing (5 passes)
+    # ------------------------------------------------------------------
+    wing = (smoothed > low_thresh).astype(int)
+    wing = ((wing + np.roll(wing, 1, 1) + np.roll(wing, -1, 1)) >= 3).astype(int)
+
+    mask = core.copy()
+    for _ in range(5):
+        mask = ((mask + np.roll(mask, 1, 1) + np.roll(mask, -1, 1)) >= 1
+                ).astype(int) * wing
+
+    # Grow edge by 2 channels for completeness
+    for _ in range(2):
+        mask = ((mask + np.roll(mask, 1, 1) + np.roll(mask, -1, 1)) >= 1).astype(int)
 
     return mask
 
@@ -313,7 +416,7 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data,
     # ------------------------------------------------------------------
     ref_line_method  = meta.get("ref_line", "first")
     SN_processing    = meta.get("SN_processing", [2, 4])
-    strict_mask      = meta.get("strict_mask", False)
+    mask_mode        = str(meta.get("strict_mask", "false")).lower()
     use_hfs_lines    = meta.get("use_hfs_lines", False)
     velocity_window  = meta.get("velocity_window", None)
     mom_calc = [
@@ -520,13 +623,34 @@ def run_products(target, fname, meta, cubes, input_mask, hfs_data,
                     f"Combined {len(mask_parts)} mask(s) with {combinator}."
                 )
 
-        # Optional strict spatial connectivity filter
-        if strict_mask:
-            LOG.info("Applying strict spatial mask filter.")
+        # Apply spatial coherence filter according to mask_mode:
+        #   'strict' — remove features smaller than ~1 beam area per channel
+        #   'broad'  — re-derive mask from spatially smoothed cube
+        #   'false'  — no additional filtering
+        if mask_mode == "strict":
+            LOG.info("Applying strict spatial mask filter (beam-area pruning).")
             mask = _apply_strict_mask(
                 np.asarray(mask.value if hasattr(mask, "value") else mask).astype(int),
                 this_data,
             ) * au.dimensionless_unscaled
+        elif mask_mode == "broad":
+            LOG.info("Applying broad spatial mask (smoothed cube + two-level S/N).")
+            # Recompute from the primary S/N reference line(s) on the
+            # spatially smoothed cube; external masks are re-combined below.
+            if mask_lines:
+                ref_name = mask_lines[0]
+                spec_data = np.array(this_data[f"SPEC_{ref_name.upper()}"])
+                broad = _apply_broad_mask(spec_data, SN_processing, this_data)
+                for extra_line in mask_lines[1:]:
+                    spec_ex = np.array(this_data[f"SPEC_{extra_line.upper()}"])
+                    broad_ex = _apply_broad_mask(spec_ex, SN_processing, this_data)
+                    broad = broad | broad_ex
+                mask = broad * au.dimensionless_unscaled
+            else:
+                LOG.warning(
+                    "broad mask mode requested but no S/N lines resolved; "
+                    "falling back to current mask."
+                )
 
         # Store the combined mask
         this_data["SPEC_MASK"] = Column(

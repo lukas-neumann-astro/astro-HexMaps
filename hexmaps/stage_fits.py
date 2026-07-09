@@ -321,33 +321,34 @@ def construct_mask_ppv(ref_cube, SN_processing):
     return mask
 
 
-def apply_strict_mask_ppv(mask, min_pixels=5):
+def apply_strict_mask_ppv(mask, min_pixels=None, beam_as=None, pixel_size_as=None):
     """
-    Remove spatially isolated mask features, the PPV-grid equivalent of
-    stage_products._apply_strict_mask.
+    Remove spatially isolated mask features (strict mode, PPV-grid).
 
-    The hex-grid version labels spatially connected groups using a pairwise
-    distance comparison between irregularly-spaced points — appropriate for
-    a sparse hex grid, but both incorrect (the neighbour distance assumption
-    doesn't hold) and prohibitively slow (O(n_pix^2) per channel) on a dense
-    rectangular grid. The natural rectangular-grid equivalent is connected-
-    component labelling on the regular pixel grid, which scipy.ndimage.label
-    computes directly using 4-connectivity (matching the hex-grid filter's
-    intent of "spatially adjacent" support).
-
-    Mask features (connected components) smaller than *min_pixels* are
-    removed, channel by channel.
+    For each channel, connected components (4-connectivity) smaller than one
+    beam area in pixels are removed.  When *beam_as* and *pixel_size_as* are
+    supplied the threshold is computed as pi*(beam_as/2)^2 / pixel_size_as^2
+    (i.e. the number of pixels per beam); otherwise *min_pixels* (default 5)
+    is used, matching the ACES ≥ 3-beam-area spirit on typical grids.
 
     Parameters
     ----------
-    mask       : np.ndarray (n_chan, ny, nx) — 0/1 mask array
-    min_pixels : int — minimum connected-component size to keep (default 5,
-                matching the hex-grid filter's hardcoded threshold)
+    mask         : np.ndarray (n_chan, ny, nx) int
+    min_pixels   : int or None — explicit minimum component size
+    beam_as      : float or None — beam FWHM in arcsec
+    pixel_size_as: float or None — pixel size in arcsec
 
     Returns
     -------
-    mask : np.ndarray — filtered mask (same shape)
+    mask : np.ndarray — filtered mask
     """
+    if min_pixels is None:
+        if beam_as is not None and pixel_size_as is not None:
+            # pixels per beam ≈ pi*(FWHM/2)^2 / pix^2
+            min_pixels = max(5, int(np.pi * (beam_as / 2.0 / pixel_size_as)**2))
+        else:
+            min_pixels = 5
+
     mask = mask.copy()
     n_chan = mask.shape[0]
     for ch in range(n_chan):
@@ -355,10 +356,92 @@ def apply_strict_mask_ppv(mask, min_pixels=5):
         if n_labels == 0:
             continue
         sizes = np.bincount(labels.ravel())
-        small_labels = np.where(sizes < min_pixels)[0]
-        small_labels = small_labels[small_labels != 0]  # never touch background
-        if len(small_labels):
-            mask[ch][np.isin(labels, small_labels)] = 0
+        small = np.where(sizes < min_pixels)[0]
+        small = small[small != 0]
+        if len(small):
+            mask[ch][np.isin(labels, small)] = 0
+    return mask
+
+
+def apply_broad_mask_ppv(ref_cube, SN_processing, ov_hdr, target_res_as):
+    """
+    Build an inclusive (broad) mask for a PPV cube using spatial smoothing
+    + two-level S/N dilation — the PPV-grid equivalent of
+    stage_products._apply_broad_mask.
+
+    Steps
+    -----
+    1. Convolve each channel of *ref_cube* to ~2× the beam using a Gaussian
+       with sigma = target_res_as (FWHM ≈ 2.35 × target_res_as pixels).
+    2. Estimate per-pixel noise (MAD) on the smoothed cube.
+    3. Core mask: pixels above high_thresh with ≥ 3 consecutive channels.
+    4. Wing mask: pixels above low_thresh with ≥ 3 consecutive channels.
+    5. Dilate core into wing (5 passes).
+    6. Grow edge by 2 channels.
+
+    Parameters
+    ----------
+    ref_cube      : np.ndarray (n_chan, ny, nx)
+    SN_processing : [low_SN, high_SN]
+    ov_hdr        : fits.Header — used to get pixel scale
+    target_res_as : float — beam FWHM in arcsec
+
+    Returns
+    -------
+    mask : np.ndarray (n_chan, ny, nx) int
+    """
+    from scipy.ndimage import gaussian_filter
+
+    # Pixel scale from header (assume square pixels)
+    try:
+        pix_as = abs(ov_hdr["CDELT1"]) * 3600.0
+    except KeyError:
+        pix_as = abs(ov_hdr.get("CD1_1", 1.0 / 3600.0)) * 3600.0
+
+    # Gaussian sigma in pixels corresponding to 1 beam FWHM
+    sigma_pix = (target_res_as / pix_as) / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    sigma_pix = max(sigma_pix, 0.5)  # don't over-smooth on very coarse grids
+
+    # Smooth each channel spatially
+    smoothed = np.full_like(ref_cube, np.nan, dtype=float)
+    finite_mask = np.isfinite(ref_cube)
+    for ch in range(ref_cube.shape[0]):
+        data_ch  = np.where(finite_mask[ch], ref_cube[ch], 0.0)
+        weight_ch = finite_mask[ch].astype(float)
+        sm_data   = gaussian_filter(data_ch,   sigma=sigma_pix)
+        sm_wt     = gaussian_filter(weight_ch, sigma=sigma_pix)
+        with np.errstate(invalid="ignore"):
+            smoothed[ch] = np.where(sm_wt > 0.1, sm_data / sm_wt, np.nan)
+
+    # Per-pixel noise on smoothed cube
+    rms = median_absolute_deviation(smoothed, axis=None, ignore_nan=True)
+    rms = median_absolute_deviation(
+        smoothed[smoothed < 3 * rms], ignore_nan=True
+    )
+    mask_rough = smoothed < 3 * rms
+    masked_sm  = np.where(mask_rough, smoothed, np.nan)
+    med_sm     = np.nanmedian(masked_sm, axis=0)
+    mad_sm     = np.nanmedian(np.abs(masked_sm - med_sm[None, :, :]), axis=0)
+
+    low_thresh  = SN_processing[0] * mad_sm[None, :, :]
+    high_thresh = SN_processing[1] * mad_sm[None, :, :]
+
+    # Core mask with consecutive-channel requirement
+    core = (smoothed > high_thresh).astype(int)
+    core = ((core + np.roll(core, 1, 0) + np.roll(core, -1, 0)) >= 3).astype(int)
+
+    # Wing mask and dilation
+    wing = (smoothed > low_thresh).astype(int)
+    wing = ((wing + np.roll(wing, 1, 0) + np.roll(wing, -1, 0)) >= 3).astype(int)
+
+    mask = core.copy()
+    for _ in range(5):
+        mask = ((mask + np.roll(mask, 1, 0) + np.roll(mask, -1, 0)) >= 1
+                ).astype(int) * wing
+
+    for _ in range(2):
+        mask = ((mask + np.roll(mask, 1, 0) + np.roll(mask, -1, 0)) >= 1).astype(int)
+
     return mask
 
 
@@ -787,7 +870,7 @@ def run_moments_ppv(
     # ------------------------------------------------------------------
     ref_line_method  = meta.get("ref_line", "first")
     SN_processing    = meta.get("SN_processing", [2, 4])
-    strict_mask      = meta.get("strict_mask", False)
+    mask_mode        = str(meta.get("strict_mask", "false")).lower()
     use_hfs_lines    = meta.get("use_hfs_lines", False)
     fov_erosion_beams = float(meta.get("fov_erosion_beams", 0.5))
     mom_calc = [
@@ -906,8 +989,12 @@ def run_moments_ppv(
             if ln_upper not in cube_data:
                 continue
             lm = construct_mask_ppv(cube_data[ln_upper].value, SN_processing).astype(int)
-            if strict_mask:
+            if mask_mode == "strict":
                 lm = apply_strict_mask_ppv(lm)
+            elif mask_mode == "broad":
+                lm = apply_broad_mask_ppv(
+                    cube_data[ln_upper].value, SN_processing, ov_hdr, target_res_as
+                )
 
             # Combine with external masks per-line.
             # When use_hfs_lines is True and the line has HFS satellite entries,
@@ -984,9 +1071,34 @@ def run_moments_ppv(
             if len(mask_parts) > 1:
                 LOG.info(f"Combined {len(mask_parts)} PPV mask(s) with {combinator}.")
 
-        if strict_mask:
-            LOG.info("Applying strict spatial mask filter (PPV).")
-            mask = apply_strict_mask_ppv(mask.astype(int))
+        if mask_mode == "strict":
+            LOG.info("Applying strict spatial mask filter (PPV, beam-area pruning).")
+            try:
+                pix_as = abs(ov_hdr["CDELT1"]) * 3600.0
+            except KeyError:
+                pix_as = None
+            mask = apply_strict_mask_ppv(
+                mask.astype(int), beam_as=target_res_as, pixel_size_as=pix_as
+            )
+        elif mask_mode == "broad":
+            LOG.info("Applying broad mask (PPV, spatially smoothed + two-level S/N).")
+            if mask_lines:
+                ref_name = mask_lines[0].upper()
+                if ref_name in cube_data:
+                    mask = apply_broad_mask_ppv(
+                        cube_data[ref_name].value, SN_processing, ov_hdr, target_res_as
+                    )
+                    for extra in mask_lines[1:]:
+                        eu = extra.upper()
+                        if eu in cube_data:
+                            mask = mask | apply_broad_mask_ppv(
+                                cube_data[eu].value, SN_processing, ov_hdr, target_res_as
+                            )
+            else:
+                LOG.warning(
+                    "broad mask mode requested but no S/N lines resolved; "
+                    "keeping current mask."
+                )
 
         # HFS mask extension — mirrors stage_products combined mode.
         # For each HFS-capable line, extend the master mask to its satellite
