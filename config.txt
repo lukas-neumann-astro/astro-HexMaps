@@ -173,7 +173,7 @@ SN_processing = 2, 4
 #   broad   — re-derive the mask from a spatially smoothed cube using the
 #             same two-level S/N + dilation strategy as PHANGS-ALMA broad
 #             masking. More inclusive; good for faint extended emission.
-strict_mask = false
+strict_mask = strict
 
 # Use explicit velocity windows (noise_mask rows in the [mask] table) for
 # noise (RMS) estimation instead of using channels outside the signal mask.
