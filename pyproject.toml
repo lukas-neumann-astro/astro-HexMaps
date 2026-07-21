@@ -3,7 +3,7 @@ requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hexmaps"
+name = "astro-hexmaps"
 version = "5.0.0"
 description = "HexMaps: Hexagonal-grid Multi-data Analysis and Processing Software for multi-wavelength astronomical datasets."
 readme = "README.md"
@@ -19,12 +19,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Astronomy",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     "astropy>=5.0",
     "numpy>=1.22",
@@ -54,9 +54,9 @@ docs = [
 hexmaps = "hexmaps.cli:main"
 
 [project.urls]
-Homepage      = "https://github.com/lukas-neumann-astro/HexMaps"
-Repository    = "https://github.com/lukas-neumann-astro/HexMaps"
-Issues        = "https://github.com/lukas-neumann-astro/HexMaps/issues"
+Homepage      = "https://github.com/PhangsTeam/HexMaps"
+Repository    = "https://github.com/PhangsTeam/HexMaps"
+Issues        = "https://github.com/PhangsTeam/HexMaps/issues"
 Documentation = "https://hexmaps.readthedocs.io/en/latest/"
 
 [tool.setuptools.packages.find]
