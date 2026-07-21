@@ -5,7 +5,7 @@ This page walks through ``config.txt`` section by section. Every key has a
 sensible default; you only need to set what differs from those defaults.
 
 
-Meta data
+Meta Data
 ---------
 
 Metadata stored in the output ``.ecsv`` table header for provenance.
@@ -17,7 +17,7 @@ Metadata stored in the output ``.ecsv`` table header for provenance.
    comments = Example HexMaps run
 
 
-Directory paths
+Directory Paths
 ---------------
 
 All file and directory paths. Relative paths are resolved relative to the
@@ -34,7 +34,7 @@ if not set, the pipeline will look for ``keys/target_definitions.txt`` and ``key
    folder_savefits = ./saved_fits_files/
 
 
-Target list
+Target List
 -----------
 
 .. code-block:: ini
@@ -47,7 +47,7 @@ prepended to the file extensions in the map and cube tables to form full
 filenames.
 
 
-Overlay file
+Overlay File
 ------------
 
 .. code-block:: ini
@@ -59,8 +59,8 @@ Overlay file
 spatial extent and spectral axis of the hexagonal grid.
 
 
-Inpute maps and cubes
----------------------
+Input Maps and Cubes
+--------------------
 
 Maps (2D) and cubes (3D) are defined as comma-separated table rows
 immediately after their comment markers.
