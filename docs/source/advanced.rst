@@ -144,29 +144,6 @@ marker. Three types of entry are supported, each distinguished by its key:
 ----
 
 
-Velocity Windows and External Masks
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-External masks in the ``# ---- mask ----`` table define the signal
-integration window or noise estimation windows.  They are enabled through
-``ref_line`` tokens or ``use_fixed_noise_mask``:
-
-.. code-block:: ini
-
-   # ---- mask ----
-
-   # Binary FITS file mask (sampled at regrid stage):
-   input_mask  = co_mask, CO signal mask, _co_mask.fits, data/
-
-   # Fixed velocity window for signal integration:
-   window_mask = win, Fixed window, -200, 200, km/s
-
-   # Line-free channels for noise estimation (multiple rows allowed):
-   noise_mask  = noise_b, Noise blue, -300, -150, km/s
-   noise_mask  = noise_r, Noise red,   150,  300, km/s
-
-----
-
 Reference Line and Mask Combinations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
