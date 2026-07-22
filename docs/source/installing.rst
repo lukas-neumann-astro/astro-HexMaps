@@ -38,7 +38,7 @@ Or install directly without cloning:
 Installing from PyPI
 --------------------
 
-Once published on PyPI:
+The package is published as "astro-hexmaps" on PyPI:
 
 .. code-block:: console
 
