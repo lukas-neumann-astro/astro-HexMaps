@@ -133,17 +133,13 @@ All file and directory locations. Relative paths are resolved relative to
 
 ----
 
-
-Map and Cube Tables
--------------------
-
-2D maps and 3D spectral cubes are listed as comma-separated rows immediately
-after the ``# ---- maps ----`` and ``# ---- cubes ----`` comment markers.
-These markers must be present; the rows between them define which datasets
-are processed.
-
 Maps (2D)
 ~~~~~~~~~
+
+2D maps are listed as comma-separated rows immediately
+after the ``# ---- maps ----`` comment markers.
+These markers must be present; the rows between them define which datasets
+are processed.
 
 .. code-block:: ini
 
@@ -183,6 +179,11 @@ Maps (2D)
 
 Cubes (3D)
 ~~~~~~~~~~
+
+3D spectral cubes (ppv) are listed as comma-separated rows immediately
+after the ``# ---- cubes ----`` comment markers.
+These markers must be present; the rows between them define which datasets
+are processed.
 
 .. code-block:: ini
 
@@ -235,59 +236,6 @@ Cubes (3D)
 ----
 
 
-Mask Table
-----------
-
-External masks are defined as rows after the ``# ---- mask ----`` comment
-marker. Three types of entry are supported, each distinguished by its key:
-
-.. code-block:: ini
-
-   # ---- mask ----
-
-   # File mask — a pre-computed binary FITS mask sampled onto the hex grid:
-   # input_mask = name, description, file_ext, directory
-   # input_mask = co_mask, CO signal mask, _co_mask.fits, data/
-
-   # Velocity-window mask — channels within a fixed velocity range:
-   # window_mask = name, description, v_start, v_end, unit
-   # window_mask = win, Fixed velocity window, 400, 600, km/s
-
-   # Noise velocity windows — line-free channels for RMS estimation:
-   # noise_mask = name, description, v_start, v_end, unit
-   # noise_mask = noise_b, Noise blue, -300, -150, km/s
-   # noise_mask = noise_r, Noise red,   150,  300, km/s
-
-``input_mask``
-   An external binary FITS file that is sampled onto the hexagonal grid at
-   the regrid stage and stored as a ``SPEC_<name>`` column. To use it as
-   part of the signal mask, add the ``input`` token to ``ref_line``.
-
-   *Columns:* ``name``, ``description``, ``file_ext``, ``directory``
-
-``window_mask``
-   A fixed velocity window defined by start and end velocities. All channels
-   within the window are set to 1; all others to 0. To use it as part of the
-   signal mask, add the ``window`` token to ``ref_line``.
-
-   *Columns:* ``name``, ``description``, ``v_start``, ``v_end``, ``unit``
-   (``unit`` must be an ``astropy.units``-readable velocity unit, e.g.
-   ``km/s``).
-
-``noise_mask``
-   One or more line-free velocity windows used for per-sightline RMS
-   estimation. Multiple rows are OR-combined into a single noise channel mask.
-   Enabled by ``use_fixed_noise_mask = true`` in ``[masking]``.
-
-   *Columns:* ``name``, ``description``, ``v_start``, ``v_end``, ``unit``
-
-   The pipeline automatically excludes any noise channels that overlap with
-   the signal integration mask, preventing signal contamination of the RMS
-   estimate.
-
-----
-
-
 [resolution]
 ------------
 
@@ -296,60 +244,31 @@ marker. Three types of entry are supported, each distinguished by its key:
    [resolution]
    target_res      = 27.0
    resolution      = angular
-   pixels_per_beam = 2
-   max_rad         = auto
-   NAXIS_shuff     = 200
-   CDELT_SHUFF     = 4000.0
-
-``target_res``
-   Target angular resolution. Interpreted according to ``resolution``:
-
-   * ``angular`` → value in **arcseconds**
-   * ``physical`` → value in **parsecs** (converted per target using
-     ``dist_mpc`` from ``target_definitions.txt``)
-   * ``native`` → ignored; the overlay beam is used as-is
-
-   *Default:* ``27.0``
 
 ``resolution``
-   Controls how ``target_res`` is interpreted:
+   Controls how ``target_res`` is interpreted and whether the input data
+   are convolved before sampling.
 
-   * ``angular`` — use ``target_res`` directly in arcseconds *(default)*
-   * ``physical`` — convert ``target_res`` (parsecs) to arcseconds using each
-     target's distance
-   * ``native`` — use the native resolution of the overlay cube; no
-     convolution is performed
+   * ``angular`` *(default)* — ``target_res`` is in **arcseconds** and is
+     applied uniformly to every target.
+   * ``physical`` — ``target_res`` is in **parsecs**.  HexMaps converts to
+     arcseconds per target using ``dist_mpc`` from
+     ``keys/target_definitions.txt``.  Targets without a valid distance are
+     skipped with a warning.
+   * ``native`` — no convolution is performed.  The overlay cube's native
+     beam is used as the effective resolution.  ``target_res`` is ignored.
 
    *Default:* ``angular``
 
-``pixels_per_beam``
-   Number of hexagonal sampling points per beam diameter. The hex-grid
-   spacing is ``target_res / pixels_per_beam``.
+``target_res``
+   Numeric value of the target resolution, in the units implied by
+   ``resolution``:
 
-   * ``2`` → half-beam spacing *(default, recommended)*
-   * ``1`` → one sightline per beam (coarser grid, fewer sightlines)
-   * ``3`` → denser grid (sightlines overlap substantially)
+   * arcseconds when ``resolution = angular``
+   * parsecs when ``resolution = physical``
+   * ignored when ``resolution = native``
 
-   *Default:* ``2``
-
-``max_rad``
-   Maximum map radius in degrees, measured from the target centre. Set to
-   ``auto`` to derive the radius from the overlap between the overlay
-   footprint and the data coverage.
-
-   *Default:* ``auto``
-
-``NAXIS_shuff``
-   Number of channels in the shuffled spectrum output. The shuffled spectra
-   are centred on the systemic velocity of each sightline and extend
-   ±(NAXIS_shuff/2 × CDELT_SHUFF) m/s.
-
-   *Default:* ``200``
-
-``CDELT_SHUFF``
-   Channel width of the shuffled spectrum in m/s.
-
-   *Default:* ``4000.0``
+   *Default:* ``27.0``
 
 ----
 
@@ -360,15 +279,7 @@ marker. Three types of entry are supported, each distinguished by its key:
 .. code-block:: ini
 
    [masking]
-   ref_line             = first
-   SN_processing        = 2, 4
-   strict_mask          = false
-   use_fixed_noise_mask = false
-   use_hfs_lines        = false
-   fov_erosion_beams    = 0.5
-   mom_thresh           = 5
-   conseq_channels      = 3
-   mom2_method          = fwhm
+   ref_line = first
 
 ``ref_line``
    Comma-separated list of tokens that controls which masks are built and
@@ -379,184 +290,7 @@ marker. Three types of entry are supported, each distinguished by its key:
 
    * Line-selection: ``first`` *(default)*, ``all``, ``<n>``,
      ``<LINE_NAME>``, ``individual``
-   * External-mask: ``input``, ``window``
-   * Combinator: ``OR`` *(default)*, ``AND``
 
    *Default:* ``first``
 
-``SN_processing``
-   Two S/N thresholds ``low, high`` for the two-level mask construction.
-   Channels above ``high`` seed the core mask; the core is grown into
-   adjacent channels above ``low`` to capture line wings.
-
-   *Default:* ``2, 4``
-
-``strict_mask``
-   Optional post-processing coherence filter applied after the signal mask
-   is built. Options:
-
-   * ``false`` — no additional filtering *(default)*
-   * ``strict`` — remove spatially isolated detections smaller than
-     approximately one beam area per channel
-   * ``broad`` — re-derive the mask from a spatially smoothed cube with
-     two-level S/N dilation
-
-   See the :ref:`AdvancedConfig` page for details and caveats.
-
-   *Default:* ``false``
-
-``use_fixed_noise_mask``
-   When ``true``, use the velocity windows defined by ``noise_mask`` rows in
-   the mask table for per-sightline RMS estimation, instead of using channels
-   outside the integration mask.
-
-   Useful when the baseline contains emission from other lines that would
-   otherwise bias the noise estimate.
-
-   *Default:* ``false``
-
-``use_hfs_lines``
-   When ``true``, extend the signal mask to the hyperfine satellite
-   frequencies of lines listed in ``hfs_file``. Requires ``hfs_file`` to be
-   set in ``[paths]``.
-
-   *Default:* ``false``
-
-``fov_erosion_beams``
-   Trim the effective field-of-view by this multiple of the beam FWHM. Pixels
-   near the map edge where the convolution kernel extends beyond the observed
-   area are biased; erosion removes them.
-
-   * ``0`` — disable erosion; keep the full overlay footprint
-   * ``0.5`` — trim by half a beam *(default, recommended minimum)*
-   * ``1.0`` — conservative; trim by one full beam
-
-   The same value is applied to the hex-grid footprint and to all FITS
-   output maps so that they share a consistent effective FOV.
-
-   *Default:* ``0.5``
-
-``mom_thresh``
-   S/N threshold for moment-1, moment-2, and equivalent-width computation.
-   Sightlines with peak S/N below this value are excluded from those
-   quantities (but moment-0 is still computed).
-
-   *Default:* ``5``
-
-``conseq_channels``
-   Minimum number of consecutive channels above the S/N threshold for a
-   detection to be considered valid. Isolated single-channel spikes are
-   rejected even if they exceed ``SN_processing[1]``.
-
-   *Default:* ``3``
-
-``mom2_method``
-   Definition used for the line-width (moment-2) output:
-
-   * ``fwhm`` — convert the intensity-weighted second moment to FWHM
-     (multiply by 2√(2 ln 2)) *(default)*
-   * ``sqrt`` — return √(mom2), the intensity-weighted velocity dispersion
-   * ``math`` — return the raw mathematical second moment
-
-   *Default:* ``fwhm``
-
 ----
-
-
-[spectral]
-----------
-
-.. code-block:: ini
-
-   [spectral]
-   spec_smooth        = default
-   spec_smooth_method = binned
-
-``spec_smooth``
-   Spectral smoothing applied to each cube before sampling:
-
-   * ``default`` — no smoothing *(default)*
-   * ``overlay`` — smooth to the spectral resolution of the overlay cube
-   * ``<float>`` — convolve to this resolution in km/s (e.g. ``5.0``)
-
-   *Default:* ``default``
-
-``spec_smooth_method``
-   Algorithm used when ``spec_smooth`` is not ``default``:
-
-   * ``binned`` — bin channels to the nearest integer ratio *(default,
-     recommended)*
-   * ``gauss`` — Gaussian kernel convolution. Note: this can underestimate
-     RMS by 10–15 % in low-S/N regions; use with caution for science.
-   * ``combined`` — bin first, then apply a Gaussian to handle the
-     fractional remainder
-
-   *Default:* ``binned``
-
-----
-
-
-[output]
---------
-
-.. code-block:: ini
-
-   [output]
-   save_cubes    = false
-   save_mom_maps = true
-   save_maps     = true
-   save_mask     = false
-
-``save_cubes``
-   When ``true``, write each convolved PPV cube to a FITS file in
-   ``folder_savefits``. Only applies to the *fits* stage
-   (``--stages all``).
-
-   *Default:* ``false``
-
-``save_mom_maps``
-   When ``true``, write moment maps (mom0, mom1, mom2, rms, Tpeak, EW, and
-   their error maps) to FITS files in ``folder_savefits``.
-
-   *Default:* ``true``
-
-``save_maps``
-   When ``true``, write the convolved and reprojected 2D band maps to FITS
-   files in ``folder_savefits``.
-
-   *Default:* ``true``
-
-``save_mask``
-   When ``true``, write the velocity-integration mask(s) to FITS cubes in
-   ``folder_savefits``. One file is written for the combined mask; additional
-   files are written per line when HFS masks or per-line masks are active.
-
-   *Default:* ``false``
-
-----
-
-
-[structure]
------------
-
-.. code-block:: ini
-
-   [structure]
-   structure_creation = default
-   # fname_fill = ngc5194_hexmaps_27p0as_2025_01_01.ecsv
-
-``structure_creation``
-   Controls how the pipeline handles existing output ``.ecsv`` files:
-
-   * ``default`` — create or overwrite the output file each run *(default)*
-   * ``fill`` — open an existing file and add only the maps/cubes that are
-     not yet present. Useful for incrementally building up a database without
-     re-processing everything.
-   * ``archive`` — append a timestamp to the filename and create a new
-     versioned copy each run. The original file is never overwritten.
-
-   *Default:* ``default``
-
-``fname_fill`` *(only used when* ``structure_creation = fill``\ *)*
-   Explicit filename of the existing ``.ecsv`` to open in fill mode. If not
-   set, the pipeline searches ``out_dir`` for the most recent matching file.
